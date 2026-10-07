@@ -558,3 +558,96 @@ gin (go) @ 5c00df8afadd: 6 of 12 properties moved out of band
   - total_nodes fell below its band: baseline=1591 measured=0 delta=-1591 (-100.0%), allowed [1463.7, 2227.4] (x0.92..x1.4)
   - primary_language_present dropped: baseline=1 measured=0 delta=-1. gin is a go project but the graph holds languages []
 ```
+
+## SQLite repeated-update storage benchmark
+
+The storage experiment is a standalone module, separate from `code-review-graph eval`,
+because it creates and mutates scratch repositories. It does not open the source
+repository's graph or change production maintenance settings.
+
+```bash
+# Small smoke run, using the committed HEAD of a Python-containing Git repository.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 2 --files 2 --query-repeats 3 \
+  --output /tmp/crg-storage-smoke.json
+
+# Compare four policies over 200 updates (100 add/revert cycles) per policy.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --maintenance-every 10 \
+  --output /tmp/crg-storage-100.json
+
+# Optional offline vector-storage workload; these are NOT semantic model embeddings.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --vector-dim 384 \
+  --output /tmp/crg-storage-vectors-100.json
+```
+
+Use a new output filename for every run; existing files are never overwritten.
+The output's parent directory must exist. The report records the source commit,
+dirty-worktree flag, harness hash, dependency versions, workload parameters and selected
+files. Git archive attributes apply; uncommitted/untracked content, symlinks, submodule
+contents and tracked graph databases are excluded. Custom `languages.toml` is retained.
+Python source files are selected in sorted path order from the indexed inventory; requesting
+more than the available count is an error. All indexed languages contribute to the graph,
+but this first workload only mutates Python. Each mutation appends a fixed set of functions
+and call edges; the revert restores the original bytes. It measures explicit changed-file
+batches with reconciliation, not Git change-discovery latency.
+
+Each policy runs sequentially in a fresh process with serial parsing and `PYTHONHASHSEED=0`.
+Inherited `CRG_*` settings are cleared and `CRG_HOME` is redirected to scratch space.
+Normal SQLite WAL auto-checkpointing remains enabled and its threshold is recorded.
+A connection remains open across cycles, approximating a persistent watcher. "Cold build"
+means an empty database, not a flushed operating-system cache.
+
+| Policy | Action at `--maintenance-every` cycles and at the last cycle |
+| --- | --- |
+| `none` | No manual maintenance |
+| `checkpoint` | `wal_checkpoint(TRUNCATE)` |
+| `vacuum` | `VACUUM`, then a truncating checkpoint |
+| `incremental` | Set `auto_vacuum=INCREMENTAL` before schema creation; reclaim at most `--incremental-pages` (default 128), then checkpoint |
+
+Every phase records main/WAL/SHM file lengths, page size/count, free-page count, and logical
+table counts. `allocated_bytes` includes committed pages that may still be in WAL;
+`non_freelist_bytes` includes indexes, metadata and internal slack, so it is **not** live
+application payload size. File lengths are not filesystem allocated-block usage. The observed
+peak is sampled at phase boundaries and excludes transient files created during vacuum.
+`dbstat` object allocations are reported when the SQLite build supports them.
+
+Parsing/resolution, post-processing, optional embedding refresh and maintenance have separate
+wall/CPU timings; cold builds also record store-opening time. CPU includes child-process
+user/system time. Worker peak RSS includes verification and diagnostics and is unavailable
+on platforms without `resource`. `peak_policy_rss_bytes` is sampled before end diagnostics;
+`peak_worker_rss_bytes` includes those diagnostics too.
+Query measurements include incoming/outgoing edges, 2-hop impact, 3-hop blast radius and FTS.
+The first call and warm p50/p95 are recorded separately, before and after churn; these are
+queries for one recorded symbol, not a representative query corpus. Default p95 uses only
+five samples; increase `--query-repeats` for latency analysis.
+
+`--vector-dim` injects a deterministic synthetic provider into the existing `EmbeddingStore`
+inside the worker. It exercises the production float32 BLOB writes, orphan cleanup and exact
+cosine search. It performs no network/model calls and measures neither model inference nor
+semantic relevance. The default leaves embeddings disabled rather than reporting a fake
+semantic-search latency.
+
+Correctness checks compare each reverted core graph and the existing fidelity benchmark's
+ID-independent derived projections with the cold build. Repeated mutated states are compared
+with the first mutation; that first mutation is **not** independently rebuilt. FTS integrity
+and dangling flow/community references are also checked. The benchmark reports drift instead
+of silently repairing it. `correctness_ok=false` or a worker failure produces exit code 2
+while still writing the report. Inspect `mismatched_layers`, `health` and `error` before
+interpreting a smaller/faster database as an improvement. `unchecked_layers` names projections
+unavailable in the running SQLite build. Verification is outside update timing.
+
+After the policy workload, separate `end_diagnostics` measure checkpointing and then vacuum.
+Those results and `after_close` must not be substituted for `final_sample` when comparing
+policy growth. The summary excludes end diagnostics from growth and maintenance totals.
+The final content check verifies that these maintenance operations preserved the graph.
+
+Run the harness tests with:
+
+```bash
+uv run pytest tests/test_storage_growth.py -q
+```
+
+This establishes a SQLite baseline. It does not select a new default backend, remove indexes,
+or establish a performance advantage for LadybugDB.
