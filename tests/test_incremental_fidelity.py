@@ -562,3 +562,8 @@ def test_ambiguous_candidate_order_survives_file_replacement(tmp_path):
         assert store.get_edges_by_source("caller.py::main")[0].extra == before
     finally:
         store.close()
+
+
+def test_all_supported_fixture_edits_match_rebuild(_mock_run):
+    assert [(row["edit_kind"], row["status"], row["total_differing_rows"])
+            for row in _mock_run] == [(kind, "ok", 0) for kind in fidelity.EDIT_KINDS]

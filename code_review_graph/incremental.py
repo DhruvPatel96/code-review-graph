@@ -1977,11 +1977,24 @@ def incremental_update(
     # Capture dependencies before deleting stale nodes and their incident edges.
     for rel_path in [*changed_files, *stale_files]:
         full_path = normalize_file_path(repo_root / rel_path)
+        previous_nodes = store.get_nodes_by_file(full_path)
+        relative = _relative_update_input(repo_root, rel_path)
+        if previous_nodes and full_path not in stale_files and Path(full_path).is_file():
+            normalized = normalize_file_path(relative)
+            digest = current_hashes.get(normalized)
+            if digest is None:
+                try:
+                    digest = hashlib.sha256(Path(full_path).read_bytes()).hexdigest()
+                    current_hashes[normalized] = digest
+                except OSError:
+                    pass  # The normal parse path reports read failures below.
+            if digest is not None and previous_nodes[0].file_hash == digest:
+                continue  # A repeated change hint must remain a no-op.
         deps = set(find_dependents(store, full_path))
         # Direct referrers must not be lost to the traversal cap or restricted
         # edge kinds. Includes edge owners with a resolved source endpoint too.
         deps.update(store.find_referrer_files(
-            node.qualified_name for node in store.get_nodes_by_file(full_path)
+            node.qualified_name for node in previous_nodes
         ))
         deps.discard(full_path)
         for d in deps:

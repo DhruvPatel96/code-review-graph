@@ -68,14 +68,11 @@ EDIT_KINDS: tuple[str, ...] = (
 #: its differing rows, and is reported as ``known_failure``. Remove an entry
 #: once the underlying bug is fixed and the regression guard takes over.
 #:
-#: Full MCP post-processing now recomputes flows and communities after node
-#: replacement. Neutral edits, additions, and reverts are strict regressions.
-#: Edits that remove or move a call target may still leave incoming edges with
-#: the old resolved qualified name; that separate resolver invalidation defect
-#: remains tracked rather than being hidden by derived-data repair.
-KNOWN_FAILURES: frozenset[str] = frozenset({
-    "rename_function", "delete_file", "move_function", "change_import",
-})
+#: Referrers are captured before deletion and reparsed even when their own
+#: bytes are unchanged. Full post-processing recomputes derived tables, and
+#: candidate/name ties use stable ordering. All seven supported edit scenarios
+#: now have strict parity coverage; do not silently whitelist new divergences.
+KNOWN_FAILURES: frozenset[str] = frozenset()
 
 #: Every table the comparator projects, in report order. ``node_community``
 #: is not a table but the ``nodes.community_id`` foreign key resolved through
