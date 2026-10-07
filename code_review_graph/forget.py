@@ -25,15 +25,13 @@ from pathlib import Path
 from typing import Any
 
 from .graph import GraphStore
+from .storage.base import FileMaintenanceStorage
 
 logger = logging.getLogger(__name__)
 
-# Keep IN-clause windows comfortably under SQLite's default 999-variable limit.
-_SQL_PARAM_CHUNK = 400
-
 
 def _referrer_files(
-    store: GraphStore,
+    store: FileMaintenanceStorage,
     deleted_qualified_names: set[str],
     forgotten: set[str],
 ) -> list[str]:
@@ -43,43 +41,12 @@ def _referrer_files(
     dropping back to a bare endpoint), so the files owning them must be
     re-parsed for parity.
     """
-    if not deleted_qualified_names:
-        return []
-    conn = store._conn
-    referrers: set[str] = set()
-    names = list(deleted_qualified_names)
-    for start in range(0, len(names), _SQL_PARAM_CHUNK):
-        window = names[start:start + _SQL_PARAM_CHUNK]
-        placeholders = ",".join("?" for _ in window)
-        rows = conn.execute(
-            f"SELECT DISTINCT file_path FROM edges "
-            f"WHERE target_qualified IN ({placeholders}) "
-            f"OR source_qualified IN ({placeholders})",
-            window + window,
-        ).fetchall()
-        referrers.update(row["file_path"] for row in rows)
-    return sorted(referrers - forgotten)
+    return sorted(set(store.find_referrer_files(deleted_qualified_names)) - forgotten)
 
 
-def _purge_orphan_embeddings(store: GraphStore) -> int:
-    """Delete embedding vectors whose graph node no longer exists.
-
-    Mirrors :meth:`embeddings.EmbeddingStore.purge_orphans` but runs on the
-    graph's own connection so we never open a second writer. A graph without
-    an embeddings table is a no-op.
-    """
-    conn = store._conn
-    has_table = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'embeddings'"
-    ).fetchone()
-    if has_table is None:
-        return 0
-    cursor = conn.execute(
-        "DELETE FROM embeddings WHERE NOT EXISTS ("
-        "SELECT 1 FROM nodes WHERE nodes.qualified_name = embeddings.qualified_name"
-        ")"
-    )
-    return max(cursor.rowcount, 0)
+def _purge_orphan_embeddings(store: FileMaintenanceStorage) -> int:
+    """Purge vectors without opening a provider or another writer."""
+    return store.purge_orphan_embeddings()
 
 
 def forget_files(
