@@ -710,3 +710,71 @@ This is one sequential run of one deterministic Python mutation workload, with o
 query target and no vector workload. Timing differences lack repeated-run confidence
 intervals. Resolve and regression-test the derived-data drift, then repeat this baseline
 before evaluating backend parity or drawing stronger performance conclusions.
+
+### Corrected derived-data baseline: 100 cycles on `19d7b99`
+
+The repair commit is `19d7b99409f3f4a8a60436ea126ad91885a29f73`. Full MCP
+post-processing now recomputes flows and communities from the resolved graph, as
+CLI post-processing already does. Replacing file nodes changes their IDs and clears
+community assignments; the old selective path could no longer join old memberships
+to those nodes, and relative file hints did not match stored absolute paths. Parsing
+and FTS updates remain incremental. Selective derived-data repair would require
+preserving dependency information before replacement; this fix chooses recomputation.
+
+Three regressions failed before the fix. Strict coverage now checks dangling
+memberships, restored community assignments, and three repeated mutation/revert cycles
+for file replacement, addition, and deletion, comparing every phase with a fresh build.
+The broad suite passed with 4,300 tests, 808 skips, 46 deselections and two existing
+XPASS results; Ruff, mypy, wheel and sdist builds also passed.
+
+The repeated experiment used a clean worktree, the **unchanged benchmark harness**
+(SHA-256 `23b703426a5b4476aa272428443eda3640682d1baa68d27ace032cadbc0ce22c`), and
+the same configuration and dependency versions as the earlier run. No embeddings or
+igraph were installed for either measurement. The committed source itself includes
+the repair and new tests, so this is not an identical-input controlled timing comparison.
+
+```bash
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --query-repeats 10 --maintenance-every 10 \
+  --output /tmp/crg-storage-fixed-100.json
+```
+
+**All four policies passed correctness and the command exited 0.** Every one of the
+800 updates passed its core/derived fingerprint, reference-integrity, and FTS checks;
+no projection was unavailable. All 400 reverts matched their cold build. Each final
+graph had 8,431 nodes, 76,840 edges, 138 flows and 6,127 flow memberships, with zero
+dangling flow memberships or community assignments. End-diagnostic maintenance also
+preserved the graph.
+
+| Policy | Cold MiB | Final MiB | Observed peak MiB | Final free pages MiB | Update p50 / p95 seconds | Total maintenance seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| None | 120.92 | 125.41 | 125.41 | 0.70 | 1.447 / 1.503 | <0.0001 |
+| Checkpoint | 120.92 | 104.36 | 123.99 | 0.70 | 1.483 / 1.595 | 0.0106 |
+| VACUUM + checkpoint | 120.92 | 91.61 | 123.99 | 0.00 | 1.442 / 1.560 | 1.8345 |
+| Incremental + checkpoint | 122.24 | 103.98 | 125.32 | 0.19 | 1.569 / 1.703 | 0.0158 |
+
+The untreated final WAL retained 21.04 MiB. End-diagnostic checkpointing reduced total
+size to 104.36 MiB and vacuum to 91.61 MiB. The untreated case grew 4.49 MiB from its
+cold sample, including 0.51 MiB between cycles 50 and 100. Incremental vacuum ended
+0.38 MiB smaller than checkpoint-only. The same measurement limits above apply.
+
+Median updates now take 1.44–1.57 seconds versus 1.00–1.05 seconds in the earlier
+run. Recomputing derived tables has a visible cost; the earlier timings came from an
+incorrect pipeline. These single-run numbers do not isolate causality or justify
+choosing a maintenance default. Worker peak RSS before diagnostics was about
+860–861 MiB, including verification. Final warm query medians ranged from
+0.87–0.91 ms for callers, 75.86–90.09 ms for two-hop impact, 96.12–116.68 ms for
+three-hop impact, and 0.060–0.065 ms for FTS on the recorded target.
+
+Tracked evidence:
+
+- [Corrected summary and provenance](../evaluate/results/storage_growth_summary_19d7b99_100.csv)
+- [Corrected phase measurements](../evaluate/results/storage_growth_curve_19d7b99_100.csv)
+- [Corrected query samples](../evaluate/results/storage_growth_queries_19d7b99_100.csv)
+
+The full local report is `evaluate/reports/storage-growth-19d7b99-100.json`; its
+SHA-256 is recorded in the summary CSV. Beads issue `crg-eot` tracks this repair and
+rerun. A separate existing resolver defect remains in `crg-c7k`: deleting a called
+file can leave incoming edges resolved to removed targets (six differing edges in
+the fidelity fixture). Passing this add/revert workload does not establish parity
+for every edit kind. Resolve that defect before claiming general backend parity.
