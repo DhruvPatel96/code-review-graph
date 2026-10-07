@@ -431,3 +431,134 @@ def test_repeated_mutation_and_revert_matches_fresh_derived_graph(tmp_path, edit
                     assert _fingerprints(store) == baseline
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("discovery", ["git", "reconcile", "watch", "capped"])
+def test_deleted_called_file_matches_rebuild(tmp_path, monkeypatch, discovery):
+    from code_review_graph.eval.benchmarks.storage_growth import _fingerprints, _health
+    from code_review_graph.graph import GraphStore
+    from code_review_graph.incremental import incremental_update
+    from code_review_graph.tools.build import _run_postprocess
+
+    if discovery == "capped":
+        monkeypatch.setattr("code_review_graph.incremental.find_dependents", lambda *args: [])
+    tree = _mock_repo(tmp_path / "repo")
+    db = tmp_path / "incremental.db"
+    fidelity._clean_build(tree, db)
+    base = fidelity._head(tree)
+    (tree / "helper.py").unlink()
+    _git(tree, "add", "-A")
+    _git(tree, "commit", "-qm", "delete called helper")
+    store = GraphStore(db)
+    fresh = GraphStore(tmp_path / "fresh.db")
+    try:
+        result = incremental_update(
+            tree, store, base=base,
+            changed_files=None if discovery == "git" else (
+                [] if discovery == "reconcile" else ["helper.py"]
+            ),
+            reconcile_stale=discovery != "watch",
+        )
+        assert not result["errors"]
+        assert "service.py" in result["dependent_files"]
+        assert not _run_postprocess(
+            store, result, "full", changed_files=result["changed_files"],
+            repo_root=str(tree),
+        )
+        from code_review_graph.eval.benchmarks.storage_growth import _pipeline
+        _pipeline(fresh, tree, None)
+        assert _health(store)["ok"]
+        assert _fingerprints(store) == _fingerprints(fresh)
+    finally:
+        store.close()
+        fresh.close()
+
+
+@pytest.mark.parametrize("failure", ["parse", "write"])
+def test_deleted_target_referrers_retry_after_failure(tmp_path, monkeypatch, failure):
+    from code_review_graph.eval.benchmarks.storage_growth import _fingerprints, _pipeline
+    from code_review_graph.graph import GraphStore
+    from code_review_graph.incremental import incremental_update
+    from code_review_graph.parser import CodeParser
+    from code_review_graph.tools.build import _run_postprocess
+
+    tree = _mock_repo(tmp_path / "repo")
+    db = tmp_path / "incremental.db"
+    fidelity._clean_build(tree, db)
+    (tree / "helper.py").unlink()
+    store = GraphStore(db)
+    try:
+        with monkeypatch.context() as patch:
+            if failure == "parse":
+                original = CodeParser.parse_bytes
+
+                def fail_parse(self, path, source):
+                    if path.name == "service.py":
+                        raise OSError("temporary read failure")
+                    return original(self, path, source)
+
+                patch.setattr(CodeParser, "parse_bytes", fail_parse)
+                result = incremental_update(tree, store, changed_files=["helper.py"])
+                assert result["errors"]
+            else:
+                original_write = store.store_file_nodes_edges
+
+                def fail_write(path, *args):
+                    if Path(path).name == "service.py":
+                        raise RuntimeError("temporary database failure")
+                    return original_write(path, *args)
+
+                patch.setattr(store, "store_file_nodes_edges", fail_write)
+                with pytest.raises(RuntimeError, match="temporary database failure"):
+                    incremental_update(tree, store, changed_files=["helper.py"])
+        assert "service.py" in store.get_metadata("pending_dependent_files")
+    finally:
+        store.close()
+
+    store = GraphStore(db)
+    fresh = GraphStore(tmp_path / "fresh.db")
+    try:
+        # Retry without source events or a reconciliation scan. The removed
+        # target and its incoming edges are already gone from the database.
+        result = incremental_update(tree, store, changed_files=[], reconcile_stale=False)
+        assert not result["errors"]
+        assert "service.py" in result["changed_files"]
+        assert store.get_metadata("pending_dependent_files") == "[]"
+        assert not _run_postprocess(
+            store, result, "full", changed_files=result["changed_files"], repo_root=str(tree),
+        )
+        _pipeline(fresh, tree, None)
+        assert _fingerprints(store) == _fingerprints(fresh)
+    finally:
+        store.close()
+        fresh.close()
+
+
+def test_ambiguous_candidate_order_survives_file_replacement(tmp_path):
+    from code_review_graph.graph import GraphStore
+    from code_review_graph.parser import EdgeInfo, NodeInfo
+
+    store = GraphStore(tmp_path / "graph.db")
+    try:
+        nodes = {
+            file: NodeInfo(kind="Function", name="greet", file_path=file,
+                           line_start=1, line_end=2, language="python")
+            for file in ("a.py", "b.py")
+        }
+        for file, node in nodes.items():
+            store.store_file_nodes_edges(file, [node], [], "hash")
+        store.store_file_nodes_edges("caller.py", [], [
+            EdgeInfo(kind="IMPORTS_FROM", source="caller.py", target="a.py",
+                     file_path="caller.py", line=1),
+            EdgeInfo(kind="IMPORTS_FROM", source="caller.py", target="b.py",
+                     file_path="caller.py", line=2),
+            EdgeInfo(kind="CALLS", source="caller.py::main", target="greet",
+                     file_path="caller.py", line=4),
+        ], "hash")
+        store.resolve_bare_call_targets()
+        before = store.get_edges_by_source("caller.py::main")[0].extra
+        store.store_file_nodes_edges("a.py", [nodes["a.py"]], [], "new hash")
+        store.resolve_bare_call_targets()
+        assert store.get_edges_by_source("caller.py::main")[0].extra == before
+    finally:
+        store.close()

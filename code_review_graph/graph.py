@@ -2304,6 +2304,9 @@ class GraphStore(SqliteFileMaintenance):
                     f"{other}_targets_truncated",
                 ):
                     desired_extra.pop(key, None)
+                # Node row order changes after per-file replacement. Keep the
+                # candidate list and its truncated prefix stable across builds.
+                resolution_candidates = sorted(resolution_candidates)
                 desired_extra.update({
                     f"{resolution}_targets": resolution_candidates[:20],
                     f"{resolution}_target_count": len(resolution_candidates),
