@@ -68,25 +68,14 @@ EDIT_KINDS: tuple[str, ...] = (
 #: its differing rows, and is reported as ``known_failure``. Remove an entry
 #: once the underlying bug is fixed and the regression guard takes over.
 #:
-#: All seven are listed because all seven diverge on this repository (see the
-#: pull request that introduced this benchmark). Three independent defects
-#: produce them:
-#:
-#: * ``flow_memberships.node_id`` is a bare integer with no foreign key and no
-#:   cascade. ``GraphStore._replace_file_data`` deletes and re-inserts a
-#:   re-parsed file's nodes, which allocates new ids, so every membership row
-#:   for that file is left dangling. Flows silently get shorter and, because
-#:   ``incremental_trace_flows`` finds affected flows by joining memberships to
-#:   ``nodes``, the dangling rows are invisible to the repair path too.
-#: * ``nodes.community_id`` is not repopulated for a re-parsed file, and
-#:   ``incremental_detect_communities`` / ``incremental_trace_flows`` compare
-#:   ``nodes.file_path`` (absolute) against ``incremental_update``'s
-#:   ``changed_files`` (repo-relative), so both always see zero affected rows
-#:   and skip.
-#: * Edges whose target lived in a deleted or re-parsed file keep the
-#:   qualified name they were resolved to, so a rebuild and an update disagree
-#:   about which call targets are resolved.
-KNOWN_FAILURES: frozenset[str] = frozenset(EDIT_KINDS)
+#: Full MCP post-processing now recomputes flows and communities after node
+#: replacement. Neutral edits, additions, and reverts are strict regressions.
+#: Edits that remove or move a call target may still leave incoming edges with
+#: the old resolved qualified name; that separate resolver invalidation defect
+#: remains tracked rather than being hidden by derived-data repair.
+KNOWN_FAILURES: frozenset[str] = frozenset({
+    "rename_function", "delete_file", "move_function", "change_import",
+})
 
 #: Every table the comparator projects, in report order. ``node_community``
 #: is not a table but the ``nodes.community_id`` foreign key resolved through
