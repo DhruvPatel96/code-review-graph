@@ -651,3 +651,62 @@ uv run pytest tests/test_storage_growth.py -q
 
 This establishes a SQLite baseline. It does not select a new default backend, remove indexes,
 or establish a performance advantage for LadybugDB.
+
+### Measured baseline: 100 cycles on `4f517b0`
+
+Source and harness commit: `4f517b006330d8594f9c7266c20acbc4baa4ab1d`, clean worktree.
+The run used Python 3.13.15, SQLite 3.53.1, Linux aarch64, serial parsing,
+20 files, four appended functions per file, 100 add/revert cycles per policy,
+maintenance every ten cycles, 128 incremental-vacuum pages, ten query repetitions,
+and no embeddings. `igraph` was unavailable, so community detection used its fallback.
+Reproduce with the command above plus `--query-repeats 10` at that commit.
+
+Tracked evidence:
+
+- [Summary and provenance](../evaluate/results/storage_growth_summary_4f517b0_100.csv)
+- [Every phase's disk/page/table measurements](../evaluate/results/storage_growth_curve_4f517b0_100.csv)
+- [Cold/final query samples](../evaluate/results/storage_growth_queries_4f517b0_100.csv)
+
+The full local report is `evaluate/reports/storage-growth-4f517b0-100.json` (ignored by Git).
+Its SHA-256 and the harness SHA-256 are recorded in the summary CSV. All four workers
+completed, totaling 800 updates. The command exited **2 because correctness checks failed**,
+not because a worker crashed.
+
+Sizes below include main DB + WAL + SHM; 1 MiB = 1,048,576 bytes. Final measurements
+follow each policy's last scheduled maintenance, before the separate end diagnostics.
+Update time excludes verification and maintenance; maintenance cost covers all ten calls.
+
+| Policy | Cold MiB | Final MiB | Observed peak MiB | Final free pages MiB | Update p50 / p95 seconds | Total maintenance seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| None | 121.10 | 125.53 | 125.53 | 0.70 | 1.005 / 1.027 | <0.0001 |
+| Checkpoint | 121.10 | 104.30 | 124.16 | 0.71 | 1.036 / 1.100 | 0.0124 |
+| VACUUM + checkpoint | 121.10 | 91.53 | 124.16 | 0.00 | 1.050 / 1.133 | 2.0499 |
+| Incremental + checkpoint | 122.48 | 104.20 | 125.44 | 0.36 | 1.006 / 1.065 | 0.0136 |
+
+Without manual maintenance, the final WAL retained 21.24 MiB. The end diagnostic
+checkpoint reduced that case from 125.53 to 104.29 MiB; subsequent VACUUM reduced it
+to 91.53 MiB. Only 0.70 MiB was on the freelist before those diagnostics, so freelist
+size alone understates reclaimable space: VACUUM also repacks partially filled pages.
+These observations support investigating SQLite maintenance before replacing the backend.
+They do not establish a production maintenance interval or a backend winner.
+
+The untreated case grew 4.43 MiB from its cold sample across 200 updates, including
+0.54 MiB between cycles 50 and 100. This run does not demonstrate a final plateau
+or unbounded long-term growth. Negative net growth for maintained cases includes removing
+WAL retained by the cold build; it is not a sustained negative growth rate.
+Incremental vacuum ended only 0.11 MiB smaller than checkpoint-only in this workload.
+Observed peaks exclude transient VACUUM files. Worker peak RSS before end diagnostics
+was approximately 814–818 MiB and includes correctness verification.
+
+**Correctness is the next investigation.** All 800 core comparisons and FTS integrity
+checks passed. Every reverted graph contained 8,430 nodes and 76,805 edges, matching the
+cold build. However, all 100 reverts in every policy differed from the cold build in
+`flows`, `flow_memberships`, `flow_snapshots`, and `node_community`. Cold builds had zero
+dangling flow memberships; every policy ended with 687. Row counts alone concealed this
+drift. End-diagnostic maintenance preserved the existing content, including the drift.
+The evidence concerns the incremental derived-data pipeline; maintenance did not repair it.
+
+This is one sequential run of one deterministic Python mutation workload, with one
+query target and no vector workload. Timing differences lack repeated-run confidence
+intervals. Resolve and regression-test the derived-data drift, then repeat this baseline
+before evaluating backend parity or drawing stronger performance conclusions.
