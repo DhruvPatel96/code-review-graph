@@ -158,8 +158,8 @@ def _run_postprocess(
 ) -> list[str]:
     """Run post-build steps based on *postprocess* level.
 
-    When *full_rebuild* is False and *changed_files* are available,
-    uses incremental flow/community detection for faster updates.
+    Full processing recomputes flows and communities after file replacement.
+    FTS still uses *changed_files* to limit index updates.
 
     Records structured stage durations in ``build_result["postprocess_timing"]``.
     Minimal processing reports ``signatures_s`` and ``fts_s``; full processing
@@ -283,20 +283,19 @@ def _run_postprocess(
         return warnings
 
     # -- Expensive: flows + communities (only for "full") --
-    use_incremental = not full_rebuild and bool(changed_files)
+    # File replacement allocates new node IDs and clears community assignments.
+    # After replacement, membership joins cannot recover the old affected flows;
+    # relative changed-file hints also cannot identify deleted nodes. Recompute
+    # these derived tables from the resolved graph, matching CLI post-processing.
+    # Safe selective repair needs dependency information captured before deletion.
 
     stage_started = time.perf_counter()
     try:
-        if use_incremental:
-            from code_review_graph.flows import incremental_trace_flows
+        from code_review_graph.flows import store_flows as _store_flows
+        from code_review_graph.flows import trace_flows as _trace_flows
 
-            count = incremental_trace_flows(store, changed_files)
-        else:
-            from code_review_graph.flows import store_flows as _store_flows
-            from code_review_graph.flows import trace_flows as _trace_flows
-
-            flows = _trace_flows(store)
-            count = _store_flows(store, flows)
+        flows = _trace_flows(store)
+        count = _store_flows(store, flows)
         build_result["flows_detected"] = count
     except (sqlite3.OperationalError, ImportError) as e:
         logger.warning("Flow detection failed: %s", e)
@@ -309,22 +308,15 @@ def _run_postprocess(
 
     stage_started = time.perf_counter()
     try:
-        if use_incremental:
-            from code_review_graph.communities import (
-                incremental_detect_communities,
-            )
+        from code_review_graph.communities import (
+            detect_communities as _detect_communities,
+        )
+        from code_review_graph.communities import (
+            store_communities as _store_communities,
+        )
 
-            count = incremental_detect_communities(store, changed_files)
-        else:
-            from code_review_graph.communities import (
-                detect_communities as _detect_communities,
-            )
-            from code_review_graph.communities import (
-                store_communities as _store_communities,
-            )
-
-            comms = _detect_communities(store)
-            count = _store_communities(store, comms)
+        comms = _detect_communities(store)
+        count = _store_communities(store, comms)
         build_result["communities_detected"] = count
     except (sqlite3.OperationalError, ImportError) as e:
         logger.warning("Community detection failed: %s", e)

@@ -323,19 +323,11 @@ def test_known_failures_only_names_real_edit_kinds():
 
 # ---------------------------------------------------------------------------
 # What the benchmark found. These document the defects at the level of the
-# defect rather than at the level of the whole-graph diff; they are xfail so
-# the pull request that fixes each one turns them green without editing them.
+# defect rather than at the level of the whole-graph diff. These must pass
+# after full post-processing of an incremental update.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    reason=(
-        "flow_memberships.node_id has no foreign key or cascade, and "
-        "GraphStore._replace_file_data re-inserts a re-parsed file's nodes "
-        "with fresh ids, so every membership row for that file is orphaned"
-    ),
-    strict=False,
-)
 def test_incremental_update_leaves_no_dangling_flow_memberships(tmp_path):
     import sqlite3
 
@@ -363,14 +355,6 @@ def test_incremental_update_leaves_no_dangling_flow_memberships(tmp_path):
     assert dangling == 0
 
 
-@pytest.mark.xfail(
-    reason=(
-        "incremental_detect_communities matches nodes.file_path (absolute) "
-        "against incremental_update's changed_files (repo-relative), so it "
-        "always finds zero affected communities and skips"
-    ),
-    strict=False,
-)
 def test_reparsed_nodes_keep_a_community_assignment(tmp_path):
     import sqlite3
 
@@ -397,3 +381,53 @@ def test_reparsed_nodes_keep_a_community_assignment(tmp_path):
     f._commit_all(tree, "neutral edit")
     f._incremental_build(tree, db, base=base)
     assert uncommunitied() == before
+
+
+@pytest.mark.parametrize("edit_kind", ["replace", "add", "delete"])
+def test_repeated_mutation_and_revert_matches_fresh_derived_graph(tmp_path, edit_kind):
+    from code_review_graph.eval.benchmarks.storage_growth import (
+        _fingerprints,
+        _health,
+        _pipeline,
+    )
+    from code_review_graph.graph import GraphStore
+
+    tree = _mock_repo(tmp_path / "repo")
+    target = tree / {"replace": "helper.py", "add": "probe.py", "delete": "main.py"}[edit_kind]
+    original = target.read_bytes() if target.exists() else None
+    store = GraphStore(tmp_path / "incremental.db")
+    try:
+        _pipeline(store, tree, None)
+        baseline = _fingerprints(store)
+        for cycle in range(3):
+            for phase in ("mutate", "revert"):
+                content = original
+                if phase == "mutate" and edit_kind == "delete":
+                    content = None
+                elif phase == "mutate" and edit_kind == "add":
+                    content = (
+                        b'from service import welcome\n\ndef main():\n'
+                        b'    return welcome("x")\n'
+                    )
+                elif phase == "mutate":
+                    assert original is not None
+                    content = original.replace(
+                        b'return f"Hello {name}"', b'return farewell(name)'
+                    ) + b'\n\ndef storage_probe(value):\n    return greet(value)\n'
+                if content is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    target.write_bytes(content)
+                _git(tree, "add", "-A")
+                _pipeline(store, tree, [target.name])
+                assert _health(store)["ok"]
+                fresh = GraphStore(tmp_path / f"fresh-{cycle}-{phase}.db")
+                try:
+                    _pipeline(fresh, tree, None)
+                    assert _fingerprints(store) == _fingerprints(fresh)
+                finally:
+                    fresh.close()
+                if phase == "revert":
+                    assert _fingerprints(store) == baseline
+    finally:
+        store.close()

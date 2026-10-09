@@ -719,10 +719,11 @@ def _open_graph_store(db_path: Path, command: str):
     reach ``main`` as themselves, because deleting any of those would destroy
     a graph, or data, that is not broken.
     """
-    from .graph import CorruptGraphDatabaseError, GraphStore, discard_corrupt_database
+    from .graph import CorruptGraphDatabaseError, discard_corrupt_database
+    from .storage.factory import open_graph_store
 
     try:
-        return GraphStore(db_path)
+        return open_graph_store(db_path)
     except CorruptGraphDatabaseError as exc:
         if command != "build":
             raise
@@ -732,7 +733,7 @@ def _open_graph_store(db_path: Path, command: str):
             db_path, exc.reason,
         )
         discard_corrupt_database(db_path)
-        return GraphStore(db_path)
+        return open_graph_store(db_path)
 
 
 def main() -> None:

@@ -15,7 +15,6 @@ import threading
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any, Optional
 
@@ -51,6 +50,11 @@ from .migrations import (
     target_resolution_expr,
 )
 from .parser import EdgeInfo, NodeInfo, is_test_file, normalize_file_path
+from .storage.models import FlowAdjacency as FlowAdjacency
+from .storage.models import GraphEdge as GraphEdge
+from .storage.models import GraphNode as GraphNode
+from .storage.models import GraphStats as GraphStats
+from .storage.sqlite_store import SqliteFileMaintenance
 
 logger = logging.getLogger(__name__)
 
@@ -291,65 +295,6 @@ def _impact_resolution_guard(resolution: str) -> str:
         f"OR COALESCE(e.target_resolution, {target_resolution_expr('e')})"
         " = 'direct')"
     )
-
-
-@dataclass
-class GraphNode:
-    id: int
-    kind: str
-    name: str
-    qualified_name: str
-    file_path: str
-    line_start: int
-    line_end: int
-    language: str
-    parent_name: Optional[str]
-    params: Optional[str]
-    return_type: Optional[str]
-    is_test: bool
-    file_hash: Optional[str]
-    extra: dict
-
-
-@dataclass
-class GraphEdge:
-    id: int
-    kind: str
-    source_qualified: str
-    target_qualified: str
-    file_path: str
-    line: int
-    extra: dict
-    confidence: float = 1.0
-    confidence_tier: str = "EXTRACTED"
-    #: 'direct', 'unresolved', or None where the distinction does not apply
-    #: (a non-call edge) or has not been computed yet. See migration v11.
-    target_resolution: Optional[str] = None
-
-
-@dataclass
-class FlowAdjacency:
-    """In-memory adjacency structure for flow tracing.
-
-    Loaded once via :meth:`GraphStore.load_flow_adjacency` and passed to
-    ``trace_flows`` / ``compute_criticality`` to avoid per-edge SQLite
-    point queries on large graphs.
-    """
-    calls_out: dict[str, list[str]]
-    has_tested_by: set[str]
-    nodes_by_qn: dict[str, "GraphNode"]
-    nodes_by_id: dict[int, "GraphNode"]
-
-
-@dataclass
-class GraphStats:
-    total_nodes: int
-    total_edges: int
-    nodes_by_kind: dict[str, int]
-    edges_by_kind: dict[str, int]
-    languages: list[str]
-    files_count: int
-    last_updated: Optional[str]
 
 
 #: How far above a file an ancestor directory may still be the target of a
@@ -688,7 +633,7 @@ def discard_corrupt_database(db_path: str | Path) -> bool:
     return removed
 
 
-class GraphStore:
+class GraphStore(SqliteFileMaintenance):
     """SQLite-backed code knowledge graph."""
 
     def __init__(self, db_path: str | Path) -> None:

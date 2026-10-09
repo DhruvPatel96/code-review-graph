@@ -3,6 +3,7 @@
 import sqlite3
 import tempfile
 from pathlib import Path
+from threading import Event
 from unittest.mock import MagicMock, patch
 
 from code_review_graph.graph import GraphStore
@@ -481,13 +482,12 @@ class TestWatchCallbackIntegration:
         db_path = tmp_path / "test.db"
         store = GraphStore(db_path)
         callback = MagicMock()
+        stop_event = Event()
+        stop_event.set()
 
         try:
-            with (
-                patch("watchdog.observers.Observer") as observer,
-                patch("time.sleep", side_effect=KeyboardInterrupt),
-            ):
-                watch(tmp_path, store, on_files_updated=callback)
+            with patch("watchdog.observers.Observer") as observer:
+                watch(tmp_path, store, on_files_updated=callback, stop_event=stop_event)
 
             callback.assert_not_called()
             observer.return_value.start.assert_called_once()
@@ -516,6 +516,10 @@ class TestWatchCallbackIntegration:
         (tmp_path / ".git").mkdir()
         store = GraphStore(tmp_path / "graph.db")
         observer = MagicMock()
+        # Stop after startup reconciliation without patching time.sleep:
+        # subprocess.wait also sleeps while collecting Git's exit status.
+        stop_event = Event()
+        stop_event.set()
 
         try:
             tracked = [
@@ -532,11 +536,8 @@ class TestWatchCallbackIntegration:
             run_post_processing(store)
             duplicate.unlink()
 
-            with (
-                patch("watchdog.observers.Observer", return_value=observer),
-                patch("time.sleep", side_effect=KeyboardInterrupt),
-            ):
-                watch(tmp_path, store, on_files_updated=run_post_processing)
+            with patch("watchdog.observers.Observer", return_value=observer):
+                watch(tmp_path, store, on_files_updated=run_post_processing, stop_event=stop_event)
 
             imported = store._conn.execute(
                 "SELECT target_qualified FROM edges "
