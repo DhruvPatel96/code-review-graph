@@ -766,7 +766,7 @@ class TestWatchLoop:
     def _watch_with(self, tmp_path, store, observer, sleeper, health_interval=0.0, **kwargs):
         with (
             patch("watchdog.observers.Observer", return_value=observer),
-            patch("time.sleep", side_effect=sleeper),
+            patch("code_review_graph.incremental._watch_sleep", side_effect=sleeper),
             patch(
                 "code_review_graph.incremental._WATCH_HEALTH_INTERVAL",
                 health_interval,
@@ -1058,7 +1058,7 @@ class TestWatchLoop:
         try:
             with (
                 patch("watchdog.observers.Observer", return_value=FakeObserver()),
-                patch("time.sleep", side_effect=KeyboardInterrupt),
+                patch("code_review_graph.incremental._watch_sleep", side_effect=KeyboardInterrupt),
                 patch(
                     "code_review_graph.incremental.incremental_update",
                     side_effect=record_initial_health,
@@ -1157,7 +1157,7 @@ class TestRealObserver:
             thread.start()
             try:
                 assert self._wait_for(
-                    lambda: watch_health_path(repo).exists()
+                    lambda: (read_watch_health(repo) or {}).get("phase") == "watching"
                 ), "the watch loop never started"
 
                 # The whole point: this directory did not exist when the

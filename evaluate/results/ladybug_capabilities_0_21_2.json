@@ -1,0 +1,29 @@
+[
+  {
+    "feature": "fts",
+    "ladybug": "0.21.2",
+    "python": "3.13.15",
+    "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+    "returncode": -11,
+    "stdout": "{\"running\": \"CREATE NODE TABLE N(q STRING PRIMARY KEY, text STRING, v FLOAT[3])\", \"parameters\": null}\n{\"result\": [[\"Table N has been created.\"]]}\n{\"running\": \"CREATE (:N {q:'a',text:'alpha',v:[1,0,0]}),(:N {q:'b',text:'beta',v:[0,1,0]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"INSTALL fts\", \"parameters\": null}\n{\"result\": [[\"Extension: fts is already installed.\\nTo update it, you can run: UPDATE fts.\"]]}\n{\"running\": \"LOAD fts\", \"parameters\": null}\n{\"result\": [[\"Extension: fts has been loaded.\"]]}\n{\"running\": \"CALL CREATE_FTS_INDEX('N','text_idx',['text'],stemmer := 'none')\", \"parameters\": null}\n{\"result\": [[\"Index text_idx has been created.\"]]}\n{\"running\": \"CREATE (:N {q:'c',text:'gamma',v:[0,0,1]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx','gamma') RETURN node.q\", \"parameters\": null}\n{\"result\": [[\"c\"]]}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n{\"result\": []}\n{\"running\": \"MATCH (n:N {q:'c'}) SET n.text='delta'\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n{\"result\": [[\"c\"]]}\n{\"running\": \"MATCH (n:N {q:'c'}) DETACH DELETE n\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n",
+    "stderr": ""
+  },
+  {
+    "feature": "vector",
+    "ladybug": "0.21.2",
+    "python": "3.13.15",
+    "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+    "returncode": 0,
+    "stdout": "{\"running\": \"CREATE NODE TABLE N(q STRING PRIMARY KEY, text STRING, v FLOAT[3])\", \"parameters\": null}\n{\"result\": [[\"Table N has been created.\"]]}\n{\"running\": \"CREATE (:N {q:'a',text:'alpha',v:[1,0,0]}),(:N {q:'b',text:'beta',v:[0,1,0]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"INSTALL vector\", \"parameters\": null}\n{\"result\": [[\"Extension: vector is already installed.\\nTo update it, you can run: UPDATE vector.\"]]}\n{\"running\": \"LOAD vector\", \"parameters\": null}\n{\"result\": [[\"Extension: vector has been loaded.\"]]}\n{\"running\": \"CALL CREATE_VECTOR_INDEX('N','vec_idx','v',metric := 'cosine')\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CREATE (:N {q:'c',text:'gamma',v:[0,0,1]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_VECTOR_INDEX('N','vec_idx',[0,0,1],1) RETURN node.q\", \"parameters\": null}\n{\"result\": [[\"c\"]]}\n{\"running\": \"MATCH (n:N {q:'c'}) DETACH DELETE n\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_VECTOR_INDEX('N','vec_idx',[0,0,1],2) RETURN node.q\", \"parameters\": null}\n{\"result\": [[\"a\"], [\"b\"]]}\n",
+    "stderr": ""
+  },
+  {
+    "feature": "both",
+    "ladybug": "0.21.2",
+    "python": "3.13.15",
+    "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+    "returncode": -11,
+    "stdout": "{\"running\": \"CREATE NODE TABLE N(q STRING PRIMARY KEY, text STRING, v FLOAT[3])\", \"parameters\": null}\n{\"result\": [[\"Table N has been created.\"]]}\n{\"running\": \"CREATE (:N {q:'a',text:'alpha',v:[1,0,0]}),(:N {q:'b',text:'beta',v:[0,1,0]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"INSTALL fts\", \"parameters\": null}\n{\"result\": [[\"Extension: fts is already installed.\\nTo update it, you can run: UPDATE fts.\"]]}\n{\"running\": \"LOAD fts\", \"parameters\": null}\n{\"result\": [[\"Extension: fts has been loaded.\"]]}\n{\"running\": \"CALL CREATE_FTS_INDEX('N','text_idx',['text'],stemmer := 'none')\", \"parameters\": null}\n{\"result\": [[\"Index text_idx has been created.\"]]}\n{\"running\": \"INSTALL vector\", \"parameters\": null}\n{\"result\": [[\"Extension: vector is already installed.\\nTo update it, you can run: UPDATE vector.\"]]}\n{\"running\": \"LOAD vector\", \"parameters\": null}\n{\"result\": [[\"Extension: vector has been loaded.\"]]}\n{\"running\": \"CALL CREATE_VECTOR_INDEX('N','vec_idx','v',metric := 'cosine')\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CREATE (:N {q:'c',text:'gamma',v:[0,0,1]})\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx','gamma') RETURN node.q\", \"parameters\": null}\n{\"result\": [[\"c\"]]}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n{\"result\": []}\n{\"running\": \"MATCH (n:N {q:'c'}) SET n.text='delta'\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n{\"result\": [[\"c\"]]}\n{\"running\": \"CALL QUERY_VECTOR_INDEX('N','vec_idx',[0,0,1],1) RETURN node.q\", \"parameters\": null}\n{\"result\": [[\"c\"]]}\n{\"running\": \"MATCH (n:N {q:'c'}) DETACH DELETE n\", \"parameters\": null}\n{\"result\": []}\n{\"running\": \"CALL QUERY_FTS_INDEX('N','text_idx',$q) RETURN node.q\", \"parameters\": {\"q\": \"delta\"}}\n",
+    "stderr": ""
+  }
+]

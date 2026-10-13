@@ -29,6 +29,10 @@ from .errors import ChangeDiscoveryError, GraphRootMismatchError, GraphStoreErro
 from .graph import GraphStore
 from .parser import CodeParser, normalize_file_path
 
+# Keep watch-loop timing patchable without replacing ``time.sleep`` process-wide.
+# Parser and SQLite retry paths may sleep while handling an event on another thread.
+_watch_sleep = time.sleep
+
 _MAX_PARSE_WORKERS = env_int("CRG_PARSE_WORKERS", min(os.cpu_count() or 4, 8))
 
 # Set only while the in-process FastMCP server is using stdio transport.
@@ -3286,14 +3290,12 @@ def watch(
     logger.info("Watching %s for changes... (Ctrl+C to stop)", repo_root)
     restore_sigterm = _install_sigterm_interrupt()
     try:
-        import time as _time
-
         while True:
             if stop_event is not None:
                 if stop_event.wait(_WATCH_TICK_SECONDS):
                     break
             else:
-                _time.sleep(_WATCH_TICK_SECONDS)
+                _watch_sleep(_WATCH_TICK_SECONDS)
             handler.raise_if_failed()
             _sync_watch_tree(supervisor, handler)
             if not supervisor.watched_paths:

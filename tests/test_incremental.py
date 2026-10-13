@@ -11,6 +11,7 @@ import pytest
 import code_review_graph.constants as constants_module
 import code_review_graph.incremental as incremental_module
 from code_review_graph.constants import discovery_timeout
+from code_review_graph.errors import ChangeDiscoveryError
 from code_review_graph.graph import GraphStore
 from code_review_graph.incremental import (
     _create_watch_handler,
@@ -34,7 +35,6 @@ from code_review_graph.incremental import (
     start_watch_thread,
     watch,
 )
-from code_review_graph.errors import ChangeDiscoveryError
 
 
 class TestParseExecutorSelection:
@@ -1410,7 +1410,7 @@ class TestWatchReconciliation:
         try:
             with (
                 patch("watchdog.observers.Observer") as observer,
-                patch("time.sleep", side_effect=KeyboardInterrupt),
+                patch("code_review_graph.incremental._watch_sleep", side_effect=KeyboardInterrupt),
             ):
                 watch(tmp_path, store, on_files_updated=on_files_updated)
             assert callback_count == 1
@@ -1432,7 +1432,7 @@ class TestWatchReconciliation:
         try:
             with (
                 patch("watchdog.observers.Observer") as observer,
-                patch("time.sleep", side_effect=KeyboardInterrupt),
+                patch("code_review_graph.incremental._watch_sleep", side_effect=KeyboardInterrupt),
                 # Patch the entry point post-processing calls, not the
                 # rebuild underneath it: whether a sync rebuilds or applies
                 # a delta depends on how much of the graph moved, and this

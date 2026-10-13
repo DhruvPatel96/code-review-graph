@@ -836,3 +836,93 @@ correctness reference before a Ladybug experiment; it does not establish parity 
 all languages or workloads. Referrer reparsing changes update work, so the earlier
 100-cycle timing numbers remain measurements of `19d7b99`, not of this revision.
 No new 100-cycle storage run or Ladybug comparison is claimed here.
+
+## Experimental Ladybug core replay
+
+The `ladybug-bench` contributor extra pins `ladybug==0.21.2`. It is deliberately
+excluded from `all` and does not select a production backend. Installation follows
+[Ladybug's Python installation guide](https://docs.ladybugdb.com/installation/).
+
+```bash
+uv sync --extra dev --extra ladybug-bench
+uv run --no-sync pytest tests/test_replay_stores.py tests/test_genai_packaging.py -q
+uv run --no-sync python -m code_review_graph.eval.benchmarks.ladybug_replay \
+  --cycles 100 --files 20 --buffer-mb 128 \
+  --output evaluate/reports/ladybug-replay.json
+uv run --no-sync python -m code_review_graph.eval.benchmarks.ladybug_capabilities \
+  --output evaluate/reports/ladybug-capabilities.json
+```
+
+Outputs must be new files. The replay archives committed HEAD into a temporary
+repository, runs the real SQLite parse/postprocessing pipeline, appends one
+function to each of 20 Python files, and verifies that reverting reproduces the
+baseline core rows. Every changed file owner (including affected dependents) is
+then replayed into fresh SQLite and Ladybug databases in separate processes.
+Each of 100 add/revert cycles compares all core rows, including duplicate edges
+and unresolved endpoints. The harness checks incoming/outgoing edges and native
+2/3-hop reverse traversals for five high-indegree symbols against a Python oracle,
+then checks persistence after checkpoint and reopen.
+
+SQLite uses the existing schema and indexes. Ladybug uses native relationships,
+JSON row payloads and explicit placeholder vertices for unresolved endpoints.
+Placeholders preserve foreign references during file replacement; permanent
+deletion removes incident references. These adapters are experimental replay
+stores, not implementations of the complete production storage contract.
+
+The 128 MiB SQLite page-cache target and Ladybug buffer pool are configuration
+settings, not equivalent total-memory limits. Ladybug uses one query thread;
+both use their default automatic checkpoint policy. Reported update timings
+exclude verification and source parsing. Disk samples include database sidecars,
+before and after an explicit checkpoint. Source builds run only once in SQLite;
+there is no Ladybug parser/MCP integration in this experiment. Derived tables,
+FTS, vectors, full impact-radius policy, embeddings, and end-to-end MCP latency
+are excluded. Disk/timing figures must not be compared directly with the earlier
+full-pipeline storage-growth benchmark. This is one machine and one source
+snapshot, not a migration verdict or a general engine ranking.
+
+The separate capability probe installs/loads the native FTS/vector extensions
+from Ladybug's extension service. See the official
+[FTS](https://docs.ladybugdb.com/extensions/full-text-search/) and
+[vector](https://docs.ladybugdb.com/extensions/vector/) documentation. It logs the
+query before execution and isolates each feature in a subprocess so a native
+crash is visible in the report. A nonzero process status is a failed capability
+gate, not a skipped test. Tiny synthetic-vector probes do not establish real
+embedding recall, search ranking compatibility, or production readiness.
+
+### Results on `22b1f193`
+
+Environment: Python 3.13.15, SQLite 3.53.1, Ladybug 0.21.2, Linux aarch64.
+The committed snapshot produced 8,438 core nodes and 77,015 core edges. The
+20 edited inputs changed 20 row owners. Raw evidence is in
+`evaluate/results/ladybug_replay_22b1f19_128mb.json`,
+`evaluate/results/ladybug_replay_22b1f19_512mb.json`,
+`evaluate/results/ladybug_replay_22b1f19_512mb_ladybug.json`, and
+`evaluate/results/ladybug_capabilities_0_21_2.json`.
+
+| Result | SQLite | Ladybug |
+| --- | ---: | ---: |
+| 128 MiB configured cache/buffer | 200/200 core replays correct | Initial load failed: buffer pool full |
+| 512 MiB median file-set replacement | 0.0373 s | 0.8173 s |
+| 512 MiB initial load | 0.612 s | 18.878 s |
+| 512 MiB peak worker RSS | 473.4 MiB | 1,052.7 MiB |
+| 512 MiB post-checkpoint disk | 92.1 MiB | 148.5 MiB |
+| `GraphStore`, depth 2 | 5.781 s, 648 correct results | 0.038 s, 569 results (incorrect) |
+| `GraphStore`, depth 3 | 8.523 s, 843 correct results | 2.538 s, 766 results (incorrect) |
+
+At 512 MiB, both stores reproduced every core row after all 200 add/revert
+updates and survived checkpoint/reopen. Ladybug was about 22 times slower for
+the measured file-set replacement and used about 2.2 times the peak worker RSS.
+Its native variable-length traversal was much faster, but failed the independent
+reachability oracle, so those query times are not successful parity results.
+
+The extension probes passed vector insert/query/delete behavior. FTS with
+literal search text passed, but the production-shaped bound-parameter FTS probe
+terminated with `SIGSEGV` after deleting an indexed node. FTS alone and the
+combined FTS/vector process both returned `-11`; vector alone returned zero.
+The probe was repeated with the same outcome.
+
+Conclusion: keep SQLite as the production backend. Ladybug is not ready for a
+backend migration here because it fails the equal-memory load, native traversal
+parity, and bound-parameter FTS safety gates. Its faster native traversal is
+interesting only after correctness and crash fixes are verified. The current
+experiment does not establish full backend or MCP parity.
