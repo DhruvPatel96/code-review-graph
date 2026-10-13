@@ -379,7 +379,10 @@ resolved to qualified names) and excludes ids and wall-clock columns. `nodes_fts
 compared through `fts5vocab`, which reads the FTS index itself rather than the `nodes`
 content table behind it.
 
-### Results on this repository
+### Historical results before incremental-fidelity repairs
+
+These measurements predate the repairs described below. They are retained as the
+original failing baseline, not the current behavior.
 
 323 files, 6,509 nodes, 57,042 edges, 186 flows. Differing rows per table, incremental
 update against clean rebuild:
@@ -397,7 +400,7 @@ update against clean rebuild:
 Benchmark wall time 79.1 s (8 clean builds plus 8 incremental updates).
 
 `nodes` and `nodes_fts` match everywhere: node rows and the search index are faithful. Every
-other divergence traces to one of three defects, none of which is fixed here.
+other divergence in this historical run traced to the defects described below.
 
 **1. `flow_memberships` is orphaned by every re-parse.** `flow_memberships.node_id` is a
 bare integer with no foreign key and no cascade, and `GraphStore._replace_file_data` deletes
@@ -430,10 +433,9 @@ The six `edges` rows that differ on every edit are a separate, smaller issue: th
 `ambiguous_targets` list inside an edge's `extra` JSON is ordered by node id, so re-parsing a
 file reorders it. Same set, different order, so the graph is not byte-reproducible.
 
-Every edit kind is listed in `incremental_fidelity.KNOWN_FAILURES`, which keeps the run from
-reporting them as unexpected. `tests/test_incremental_fidelity.py` guards against a kind that
-currently passes starting to diverge, and carries two `xfail` tests that document defects 1
-and 2 at the level of the defect.
+At that baseline, every edit kind was listed in `incremental_fidelity.KNOWN_FAILURES`
+and two defect tests were marked `xfail`. Those tests are now strict regressions and
+`KNOWN_FAILURES` is empty; new divergences are reported as failures of parity.
 
 ## Weekly CI run (report-only)
 
@@ -774,7 +776,63 @@ Tracked evidence:
 
 The full local report is `evaluate/reports/storage-growth-19d7b99-100.json`; its
 SHA-256 is recorded in the summary CSV. Beads issue `crg-eot` tracks this repair and
-rerun. A separate existing resolver defect remains in `crg-c7k`: deleting a called
-file can leave incoming edges resolved to removed targets (six differing edges in
-the fidelity fixture). Passing this add/revert workload does not establish parity
-for every edit kind. Resolve that defect before claiming general backend parity.
+rerun. At that revision, `crg-c7k` still tracked deleted-target edge invalidation
+(six differing edges in the fidelity fixture). The later repair and broader edit
+verification are described next. The add/revert workload alone does not establish
+parity for every edit kind.
+
+### Deleted-target repair and seven-edit parity on `87f4804`
+
+The repository-scale fidelity run on commit `87f4804` completed with **all seven
+scenarios passing and zero differing rows**: trailing comment, function rename,
+file deletion, file addition, function move, import change, and revert. No table
+projection was unavailable and no known-failure exemption was used.
+
+[Tracked results and provenance](../evaluate/results/incremental_fidelity_87f4804.csv)
+record the full source commit, Python/SQLite versions, raw report hash, edit targets,
+and per-table differences. The raw report and progress log are retained locally in
+`evaluate/reports/deleted-target-fidelity.json` and `.log`. The run used a clean
+worktree, serial parsing, `PYTHONHASHSEED=0`, and scratch repositories. Fidelity run
+timings are not a storage-performance comparison.
+
+The deletion repair captures edge-owning referrers before stale-file cleanup erases
+the nodes and incoming edges needed to discover them. Those dependent files are
+reparsed even when their own bytes are unchanged, restoring unresolved calls as a
+fresh build would. Direct referrers are collected independently of the bounded
+transitive traversal. Reparsed and removed paths reach FTS post-processing too.
+A persistent pending-referrer set lets a later update retry parser or database
+failures after the original dependency evidence has gone. Repeated change hints
+for unchanged targets remain no-ops.
+
+Repository-scale testing also exposed insertion-order-dependent output. Ambiguous
+and unresolved candidate lists now sort before truncation; tied community naming
+and language counts use lexical tie-breaking. These changes prevent equivalent
+updated and freshly built graphs from differing only because row IDs changed.
+
+Regression coverage includes Git-detected deletion, reconciliation-only discovery,
+watch batches, capped dependency discovery, parser/write failure recovery after
+reopening the database, no-op updates, and deterministic candidate/community output.
+The final suite passed **4,309 tests**, with 808 skips, 46 deselections and two existing
+XPASS results. Ruff, mypy, wheel and sdist builds passed. The real-observer deletion
+test now waits for the `watching` phase rather than deleting a directory during the
+initial-build heartbeat, before the observer has started.
+
+To repeat the seven scenarios against the current local checkout:
+
+```bash
+CRG_SERIAL_PARSE=1 PYTHONHASHSEED=0 uv run python - <<'PY'
+import json
+from pathlib import Path
+from code_review_graph.eval.benchmarks.incremental_fidelity import run
+
+rows = run(Path.cwd(), None, {"name": "code-review-graph"})
+print(json.dumps(rows, indent=2))
+assert all(row["status"] == "ok" and row["total_differing_rows"] == 0 for row in rows)
+PY
+```
+
+`crg-c7k` is resolved for these covered scenarios. This strengthens the SQLite
+correctness reference before a Ladybug experiment; it does not establish parity for
+all languages or workloads. Referrer reparsing changes update work, so the earlier
+100-cycle timing numbers remain measurements of `19d7b99`, not of this revision.
+No new 100-cycle storage run or Ladybug comparison is claimed here.
