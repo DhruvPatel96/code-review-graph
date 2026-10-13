@@ -1258,7 +1258,11 @@ class TestRealObserver:
             thread = threading.Thread(target=run_watch, name="watch-under-test", daemon=True)
             thread.start()
             try:
-                assert self._wait_for(lambda: watch_health_path(repo).exists())
+                # The initial-build heartbeat exists before observer.start().
+                # Delete only after the directory is actually being watched.
+                assert self._wait_for(
+                    lambda: (read_watch_health(repo) or {}).get("phase") == "watching"
+                )
                 shutil.rmtree(repo / "lib")
                 time.sleep(1.0)  # several ticks
                 still_running = thread.is_alive()
