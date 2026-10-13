@@ -43,6 +43,32 @@ jobs:
       - name: Run mypy
         run: mypy code_review_graph/ --ignore-missing-imports --no-strict-optional
 
+  native-core:
+    name: Rust core parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Check Rust formatting and lints
+        run: |
+          cargo fmt --manifest-path native/Cargo.toml -- --check
+          cargo clippy --manifest-path native/Cargo.toml --all-targets -- -D warnings
+      - name: Build native extension
+        run: maturin develop --release --manifest-path native/Cargo.toml
+      - name: Check native parity
+        run: pytest tests/test_native_core.py -q
+
   security:
     runs-on: ubuntu-latest
     steps:

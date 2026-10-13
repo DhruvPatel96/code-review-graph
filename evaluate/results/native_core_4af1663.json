@@ -1,0 +1,30 @@
+{
+  "source_revision": "4af16630b806d51be77ba19e341aa445bde8b913",
+  "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+  "python": "3.13.15",
+  "native_core": "0.1.0",
+  "files": 274,
+  "bytes": 6077551,
+  "repeats": 5,
+  "scope": "Rust hashes and extracts Python class/function definitions; Python timing is the complete current parser and is not equivalent work",
+  "correctness_ok": true,
+  "mismatched_files": [],
+  "python_full_parse_seconds": [
+    4.888890115000322,
+    4.725159981999241,
+    4.354787364000003,
+    4.705314041999372,
+    4.370526859000165
+  ],
+  "python_full_parse_median_seconds": 4.705314041999372,
+  "rust_definition_slice_seconds": [
+    0.23111773099844868,
+    0.22323019900068175,
+    0.2271456180005771,
+    0.24149488600050972,
+    0.26744366599996283
+  ],
+  "rust_definition_slice_median_seconds": 0.23111773099844868,
+  "observed_ratio": 20.358948755995513,
+  "harness_sha256": "21ac8fdeb8d1527c6556f5dc3d11308ad1b052d9be710eb09adf006c3e38b3f9"
+}

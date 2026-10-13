@@ -10,6 +10,7 @@
 - [schema.md](schema.md): node and edge types, SQLite tables (including flows, communities, FTS5)
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): common problems and fixes, including Windows/WSL
 - [REPRODUCING.md](REPRODUCING.md): how every benchmark number was produced (pinned SHAs, seeded runs, tokenizer calibration)
+- [RUST-MIGRATION.md](RUST-MIGRATION.md): staged native-core migration, parity gates, and build commands
 - [ROADMAP.md](ROADMAP.md): shipped and planned work
 - [LEGAL.md](LEGAL.md): licence and privacy
 - [LLM-OPTIMIZED-REFERENCE.md](../code_review_graph/docs/LLM-OPTIMIZED-REFERENCE.md): compact reference shipped inside the package for MCP clients
