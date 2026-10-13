@@ -67,7 +67,7 @@ jobs:
       - name: Build native extension
         run: |
           maturin build --release --manifest-path native/Cargo.toml --out wheelhouse
-          python -m pip install --force-reinstall wheelhouse/*.whl
+          python -m pip install --force-reinstall --no-deps wheelhouse/*.whl
       - name: Check native parity
         run: pytest tests/test_native_core.py -q
 
@@ -117,7 +117,7 @@ jobs:
         run: |
           python -m pip install maturin
           maturin build --release --manifest-path native/Cargo.toml --out wheelhouse
-          python -m pip install --force-reinstall wheelhouse/*.whl
+          python -m pip install --force-reinstall --no-deps wheelhouse/*.whl
       - name: Verify installed native and fallback boundaries
         shell: bash
         run: |
