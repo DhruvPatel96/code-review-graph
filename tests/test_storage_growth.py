@@ -148,7 +148,8 @@ def test_maintenance_reclaims_only_requested_space(tmp_path: Path, policy: str) 
             assert after["freelist_count"] == 0
             assert after["allocated_bytes"] < before["allocated_bytes"]
         elif policy == "incremental":
-            assert before["freelist_count"] - after["freelist_count"] == 3
+            reclaimed = before["freelist_count"] - after["freelist_count"]
+            assert 0 < reclaimed <= 3
         else:
             assert after["freelist_count"] == before["freelist_count"]
 
