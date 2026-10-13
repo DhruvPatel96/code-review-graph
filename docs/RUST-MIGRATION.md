@@ -5,11 +5,13 @@ configuration, external providers and compatibility orchestration. Rust takes
 over bounded CPU-heavy operations only after exact parity and benchmark gates
 pass. SQLite remains the storage format.
 
-## Current milestone: Python definition extraction
+## Current milestone: Python definition and containment extraction
 
 `native/` builds an ABI3 extension for CPython 3.10 and newer. Its first batch
 API reads Python byte snapshots, computes SHA-256 hashes, parses them in
-parallel with Tree-sitter, and returns deterministic class/function definitions.
+parallel with Tree-sitter, and returns deterministic class/function definitions
+plus their `CONTAINS` edges. Definition rows include parameters, return types,
+decorators, test classification and repository-aware identity fields.
 The Python boundary is `code_review_graph.native`; importing the main package
 does not require Rust. Production builds and updates do not call it yet.
 
@@ -24,18 +26,19 @@ uv run python -m code_review_graph.eval.benchmarks.native_core \
   --repeats 5 --output evaluate/results/native_core.json
 ```
 
-The parity test covers every ordinary Python fixture. Databricks exports are
+The parity test covers every ordinary Python fixture and compares the expanded
+definition rows and `CONTAINS` edges exactly. Databricks exports are
 excluded because they use a separate polyglot Python/R/SQL preprocessing path.
 The benchmark reports the native definition slice beside the complete Python
 parser. Those timings represent different workloads and therefore measure an
 optimization ceiling, not an end-to-end speedup.
 
-On committed source revision `4af1663`, the gate covered 274 Python files
-(6.1 MB) with zero definition mismatches. Across five repetitions, the Rust
-definition slice had a 0.231-second median; the complete Python parser had a
-4.705-second median. The observed 20.4x ratio is an upper bound because the
-Python side also extracts imports, calls and other graph metadata. Raw evidence
-is tracked in `evaluate/results/native_core_4af1663.json`.
+On committed source revision `987f57a`, the expanded gate covered 277 Python
+files (6.1 MB) with zero definition or `CONTAINS` differences. Across five
+repetitions, the Rust slice had a 0.288-second median; the complete Python parser
+had a 4.797-second median. The observed 16.7x ratio is an upper bound because
+the Python side also extracts imports, calls and other graph metadata. Raw
+evidence is tracked in `evaluate/results/native_core_987f57a_rows.json`.
 
 ## Activation gates
 

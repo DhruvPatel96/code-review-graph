@@ -1,4 +1,5 @@
 """Contract tests for the opt-in Rust parsing core."""
+
 from __future__ import annotations
 
 import hashlib
@@ -36,7 +37,7 @@ def test_native_python_batch_is_deterministic(tmp_path: Path) -> None:
     second = tmp_path / "second.py"
     second.write_text("def other():\n    return 3\n", encoding="utf-8")
 
-    result = parse_python_batch([first, second])
+    result = parse_python_batch([first, second], tmp_path)
     assert [row.path for row in result] == [first.as_posix(), second.as_posix()]
     assert result[0].sha256 == hashlib.sha256(first.read_bytes()).hexdigest()
     assert result[0].syntax_errors == 0
@@ -59,23 +60,54 @@ def test_native_definition_projection_matches_python_fixtures() -> None:
     # Databricks exports embed R/SQL cells and intentionally use a separate
     # polyglot preprocessing path. This first native slice covers Python syntax.
     paths = sorted(path for path in FIXTURES.glob("*.py") if "databricks" not in path.name)
-    native = parse_python_batch(paths)
+    native = parse_python_batch(paths, FIXTURES)
     parser = CodeParser(FIXTURES)
     for path, actual in zip(paths, native, strict=True):
-        nodes, _ = parser.parse_file(path)
+        nodes, edges = parser.parse_file(path)
         expected = sorted(
             (
-                "Class" if node.kind == "Class" else "Function",
-                node.name,
-                node.parent_name,
-                node.line_start,
-                node.line_end,
-            )
-            for node in nodes
-            if node.kind in {"Class", "Function", "Test"}
+                (
+                    node.kind,
+                    node.name,
+                    node.parent_name,
+                    node.line_start,
+                    node.line_end,
+                    node.params,
+                    node.return_type,
+                    node.modifiers,
+                    node.is_test,
+                    node.identity_name,
+                )
+                for node in nodes
+                if node.kind in {"Class", "Function", "Test"}
+            ),
+            key=repr,
         )
         observed = sorted(
-            (item.kind, item.name, item.parent_name, item.line_start, item.line_end)
-            for item in actual.definitions
+            (
+                (
+                    item.kind,
+                    item.name,
+                    item.parent_name,
+                    item.line_start,
+                    item.line_end,
+                    item.params,
+                    item.return_type,
+                    item.modifiers,
+                    item.is_test,
+                    item.identity_name,
+                )
+                for item in actual.definitions
+            ),
+            key=repr,
         )
         assert observed == expected, path.name
+        expected_contains = sorted(
+            (edge.kind, edge.source, edge.target, edge.line)
+            for edge in edges
+            if edge.kind == "CONTAINS"
+        )
+        observed_contains = sorted(
+            (edge.kind, edge.source, edge.target, edge.line) for edge in actual.edges
+        )
+        assert observed_contains == expected_contains, path.name

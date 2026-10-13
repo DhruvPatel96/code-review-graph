@@ -1,4 +1,4 @@
-"""Measure the opt-in Rust Python-definition slice against the current parser."""
+"""Measure the opt-in Rust Python-definition/containment slice."""
 
 from __future__ import annotations
 
@@ -17,31 +17,55 @@ from ...parser import CodeParser
 from .storage_growth import _git, snapshot_repository
 
 
-def _projection(nodes: list) -> list[tuple[str, str, str | None, int, int]]:
-    return sorted(
-        [
+def _projection(nodes: list, edges: list) -> tuple[list[tuple], list[tuple]]:
+    definitions = sorted(
+        (
             (
-                "Class" if node.kind == "Class" else "Function",
+                node.kind,
                 node.name,
                 node.parent_name,
                 node.line_start,
                 node.line_end,
+                node.params,
+                node.return_type,
+                node.modifiers,
+                node.is_test,
+                node.identity_name,
             )
             for node in nodes
             if node.kind in {"Class", "Function", "Test"}
-        ],
-        key=lambda item: (item[0], item[1], item[2] or "", item[3], item[4]),
+        ),
+        key=repr,
     )
+    contains = sorted(
+        (edge.kind, edge.source, edge.target, edge.line)
+        for edge in edges
+        if edge.kind == "CONTAINS"
+    )
+    return definitions, contains
 
 
-def _native_projection(result: NativeParseResult) -> list[tuple[str, str, str | None, int, int]]:
-    return sorted(
-        [
-            (item.kind, item.name, item.parent_name, item.line_start, item.line_end)
+def _native_projection(result: NativeParseResult) -> tuple[list[tuple], list[tuple]]:
+    definitions = sorted(
+        (
+            (
+                item.kind,
+                item.name,
+                item.parent_name,
+                item.line_start,
+                item.line_end,
+                item.params,
+                item.return_type,
+                item.modifiers,
+                item.is_test,
+                item.identity_name,
+            )
             for item in result.definitions
-        ],
-        key=lambda item: (item[0], item[1], item[2] or "", item[3], item[4]),
+        ),
+        key=repr,
     )
+    contains = sorted((edge.kind, edge.source, edge.target, edge.line) for edge in result.edges)
+    return definitions, contains
 
 
 def _ordinary_python(path: Path) -> bool:
@@ -74,8 +98,8 @@ def run(source: Path, repeats: int) -> dict:
             started = time.perf_counter()
             rows = []
             for path in paths:
-                nodes, _ = parser.parse_file(path)
-                rows.append(_projection(nodes))
+                nodes, edges = parser.parse_file(path)
+                rows.append(_projection(nodes, edges))
             python_samples.append(time.perf_counter() - started)
             expected = rows
 
@@ -83,7 +107,7 @@ def run(source: Path, repeats: int) -> dict:
         actual = None
         for _ in range(repeats):
             started = time.perf_counter()
-            parsed = parse_python_batch(paths)
+            parsed = parse_python_batch(paths, tree)
             native_samples.append(time.perf_counter() - started)
             actual = [_native_projection(row) for row in parsed]
 
@@ -103,7 +127,7 @@ def run(source: Path, repeats: int) -> dict:
             "bytes": sum(path.stat().st_size for path in paths),
             "repeats": repeats,
             "scope": (
-                "Rust hashes and extracts Python class/function definitions; "
+                "Rust hashes and extracts Python definitions and CONTAINS edges; "
                 "Python timing is the complete current parser and is not equivalent work"
             ),
             "correctness_ok": not mismatches,

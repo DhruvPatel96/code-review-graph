@@ -10,6 +10,9 @@ struct Definition {
     kind: &'static str,
     name: String,
     parent_name: Option<String>,
+    params: Option<String>,
+    return_type: Option<String>,
+    decorators: Vec<String>,
     line_start: usize,
     line_end: usize,
 }
@@ -20,6 +23,15 @@ struct ParseResult {
     sha256: String,
     syntax_errors: usize,
     definitions: Vec<Definition>,
+    edges: Vec<Edge>,
+}
+
+#[derive(Serialize)]
+struct Edge {
+    kind: &'static str,
+    source: String,
+    target: String,
+    line: usize,
 }
 
 fn node_text(node: Node<'_>, source: &[u8]) -> Option<String> {
@@ -30,11 +42,38 @@ fn visit(
     node: Node<'_>,
     source: &[u8],
     parent: Option<&str>,
+    decorators: &[String],
     definitions: &mut Vec<Definition>,
     syntax_errors: &mut usize,
 ) {
     if node.is_error() || node.is_missing() {
         *syntax_errors += 1;
+    }
+
+    if node.kind() == "decorated_definition" {
+        let mut own_decorators = Vec::new();
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "decorator" {
+                if let Some(text) = node_text(child, source) {
+                    own_decorators.push(text.trim().trim_start_matches('@').to_owned());
+                }
+            }
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if matches!(child.kind(), "class_definition" | "function_definition") {
+                visit(
+                    child,
+                    source,
+                    parent,
+                    &own_decorators,
+                    definitions,
+                    syntax_errors,
+                );
+            }
+        }
+        return;
     }
 
     let kind = match node.kind() {
@@ -57,6 +96,13 @@ fn visit(
             kind,
             name,
             parent_name: parent.map(ToOwned::to_owned),
+            params: node
+                .child_by_field_name("parameters")
+                .and_then(|child| node_text(child, source)),
+            return_type: node
+                .child_by_field_name("return_type")
+                .and_then(|child| node_text(child, source)),
+            decorators: decorators.to_vec(),
             line_start: start.row + 1,
             line_end: end.row + 1,
         });
@@ -68,6 +114,7 @@ fn visit(
             child,
             source,
             next_parent.as_deref(),
+            &[],
             definitions,
             syntax_errors,
         );
@@ -88,6 +135,7 @@ fn parse_one(path: String, source: Vec<u8>) -> Result<ParseResult, String> {
         tree.root_node(),
         &source,
         None,
+        &[],
         &mut definitions,
         &mut syntax_errors,
     );
@@ -99,11 +147,34 @@ fn parse_one(path: String, source: Vec<u8>) -> Result<ParseResult, String> {
             &right.name,
         ))
     });
+    let edges = definitions
+        .iter()
+        .map(|definition| {
+            let (source, target) = match (&definition.parent_name, definition.kind) {
+                (Some(parent), "Function") => (
+                    format!("{path}::{parent}"),
+                    format!("{path}::{parent}.{}", definition.name),
+                ),
+                (Some(parent), _) => (
+                    path.clone(),
+                    format!("{path}::{parent}.{}", definition.name),
+                ),
+                (None, _) => (path.clone(), format!("{path}::{}", definition.name)),
+            };
+            Edge {
+                kind: "CONTAINS",
+                source,
+                target,
+                line: definition.line_start,
+            }
+        })
+        .collect();
     Ok(ParseResult {
         path,
         sha256: format!("{:x}", Sha256::digest(&source)),
         syntax_errors,
         definitions,
+        edges,
     })
 }
 
