@@ -11,6 +11,7 @@ from code_review_graph.native import (
     NativeCoreUnavailableError,
     core_version,
     parse_python_batch,
+    parser_rows,
 )
 from code_review_graph.parser import CodeParser
 
@@ -77,9 +78,9 @@ def test_native_definition_projection_matches_python_fixtures() -> None:
                     node.modifiers,
                     node.is_test,
                     node.identity_name,
+                    node.extra,
                 )
                 for node in nodes
-                if node.kind in {"Class", "Function", "Test"}
             ),
             key=repr,
         )
@@ -96,18 +97,54 @@ def test_native_definition_projection_matches_python_fixtures() -> None:
                     item.modifiers,
                     item.is_test,
                     item.identity_name,
+                    item.extra,
                 )
-                for item in actual.definitions
+                for item in (actual.file_node, *actual.definitions)
             ),
             key=repr,
         )
         assert observed == expected, path.name
-        expected_contains = sorted(
-            (edge.kind, edge.source, edge.target, edge.line)
-            for edge in edges
-            if edge.kind == "CONTAINS"
+        expected_structural_edges = sorted(
+            (
+                (edge.kind, edge.source, edge.target, edge.line, edge.extra)
+                for edge in edges
+                if edge.kind
+            ),
+            key=repr,
         )
-        observed_contains = sorted(
-            (edge.kind, edge.source, edge.target, edge.line) for edge in actual.edges
+        observed_structural_edges = sorted(
+            ((edge.kind, edge.source, edge.target, edge.line, edge.extra) for edge in actual.edges),
+            key=repr,
         )
-        assert observed_contains == expected_contains, path.name
+        assert observed_structural_edges == expected_structural_edges, path.name
+
+
+def test_native_parser_rows_match_public_parser_contract() -> None:
+    pytest.importorskip("code_review_graph._native")
+    path = FIXTURES / "sample_python.py"
+    native_nodes, native_edges = parser_rows(parse_python_batch([path], FIXTURES)[0])
+    python_nodes, python_edges = CodeParser(FIXTURES).parse_file(path)
+
+    assert native_nodes == python_nodes
+    assert sorted(native_edges, key=repr) == sorted(python_edges, key=repr)
+
+
+def test_native_feature_flag_selects_snapshot_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("code_review_graph._native")
+    from code_review_graph import incremental
+
+    path = FIXTURES / "sample_python.py"
+    source = path.read_bytes()
+    monkeypatch.setenv("CRG_NATIVE_CORE", "1")
+    native_nodes, native_edges = incremental._parse_snapshot(
+        path,
+        source,
+        CodeParser(FIXTURES),
+        FIXTURES,
+    )
+    python_nodes, python_edges = CodeParser(FIXTURES).parse_bytes(path, source)
+
+    assert native_nodes == python_nodes
+    assert sorted(native_edges, key=repr) == sorted(python_edges, key=repr)

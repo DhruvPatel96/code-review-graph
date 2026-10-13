@@ -1,4 +1,4 @@
-"""Measure the opt-in Rust Python-definition/containment slice."""
+"""Measure the opt-in Rust Python graph-row path against the current parser."""
 
 from __future__ import annotations
 
@@ -31,18 +31,21 @@ def _projection(nodes: list, edges: list) -> tuple[list[tuple], list[tuple]]:
                 node.modifiers,
                 node.is_test,
                 node.identity_name,
+                node.extra,
             )
             for node in nodes
-            if node.kind in {"Class", "Function", "Test"}
         ),
         key=repr,
     )
-    contains = sorted(
-        (edge.kind, edge.source, edge.target, edge.line)
-        for edge in edges
-        if edge.kind == "CONTAINS"
+    structural_edges = sorted(
+        (
+            (edge.kind, edge.source, edge.target, edge.line, edge.extra)
+            for edge in edges
+            if edge.kind
+        ),
+        key=repr,
     )
-    return definitions, contains
+    return definitions, structural_edges
 
 
 def _native_projection(result: NativeParseResult) -> tuple[list[tuple], list[tuple]]:
@@ -59,13 +62,17 @@ def _native_projection(result: NativeParseResult) -> tuple[list[tuple], list[tup
                 item.modifiers,
                 item.is_test,
                 item.identity_name,
+                item.extra,
             )
-            for item in result.definitions
+            for item in (result.file_node, *result.definitions)
         ),
         key=repr,
     )
-    contains = sorted((edge.kind, edge.source, edge.target, edge.line) for edge in result.edges)
-    return definitions, contains
+    structural_edges = sorted(
+        ((edge.kind, edge.source, edge.target, edge.line, edge.extra) for edge in result.edges),
+        key=repr,
+    )
+    return definitions, structural_edges
 
 
 def _ordinary_python(path: Path) -> bool:
@@ -127,15 +134,15 @@ def run(source: Path, repeats: int) -> dict:
             "bytes": sum(path.stat().st_size for path in paths),
             "repeats": repeats,
             "scope": (
-                "Rust hashes and extracts Python definitions and CONTAINS edges; "
-                "Python timing is the complete current parser and is not equivalent work"
+                "Both paths emit complete Python graph rows; the native path still uses "
+                "the Python compatibility evidence scan for exact resolver semantics"
             ),
             "correctness_ok": not mismatches,
             "mismatched_files": mismatches,
             "python_full_parse_seconds": python_samples,
             "python_full_parse_median_seconds": python_median,
-            "rust_definition_slice_seconds": native_samples,
-            "rust_definition_slice_median_seconds": native_median,
+            "native_full_rows_seconds": native_samples,
+            "native_full_rows_median_seconds": native_median,
             "observed_ratio": python_median / native_median,
             "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         }

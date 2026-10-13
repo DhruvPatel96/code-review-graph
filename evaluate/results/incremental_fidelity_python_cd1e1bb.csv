@@ -1,0 +1,8 @@
+repo,edit_kind,status,known_failure,target,total_differing_rows,worst_table,snapshot_nodes_only_in_rebuild,snapshot_nodes_only_in_incremental,snapshot_edges_only_in_rebuild,snapshot_edges_only_in_incremental,unchecked_tables,example,note,seconds,benchmark_seconds,nodes_diff,node_community_diff,edges_diff,communities_diff,flows_diff,flow_memberships_diff,nodes_fts_diff,community_summaries_diff,flow_snapshots_diff,risk_index_diff,metadata_diff
+code-review-graph,trailing_comment,ok,0,code_review_graph/embeddings.py,0,,0,0,0,0,,,appended one comment line,1.636,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,rename_function,ok,0,code_review_graph/embeddings.py,0,,0,0,0,0,,,renamed embed to embed_crg_renamed,1.657,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,delete_file,ok,0,code_review_graph/graph.py,0,,0,0,0,0,,,deleted a depended-on file,1.836,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,add_file,ok,0,code_review_graph/crg_fidelity_probe.py,0,,0,0,0,0,,,added a new source file,1.769,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,move_function,ok,0,code_review_graph/embeddings.py -> code_review_graph/parser.py,0,,0,0,0,0,,,moved semantic_search,1.81,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,change_import,ok,0,code_review_graph/embeddings.py,0,,0,0,0,0,,,removed import at line 11,1.678,13.585,0,0,0,0,0,0,0,0,0,0,0
+code-review-graph,revert,ok,0,code_review_graph/embeddings.py,0,,0,0,0,0,,,appended then removed one comment line,2.013,13.585,0,0,0,0,0,0,0,0,0,0,0

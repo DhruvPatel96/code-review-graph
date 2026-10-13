@@ -1,0 +1,30 @@
+{
+  "source_revision": "cd1e1bb73fceff2145adce94e4245da2ce4f717a",
+  "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+  "python": "3.13.15",
+  "native_core": "0.1.0",
+  "files": 277,
+  "bytes": 6090176,
+  "repeats": 5,
+  "scope": "Both paths emit complete Python graph rows; the native path still uses the Python compatibility evidence scan for exact resolver semantics",
+  "correctness_ok": true,
+  "mismatched_files": [],
+  "python_full_parse_seconds": [
+    5.47052050700222,
+    5.567661777000467,
+    5.718803771000239,
+    5.6029266890000144,
+    5.745487572999991
+  ],
+  "python_full_parse_median_seconds": 5.6029266890000144,
+  "native_full_rows_seconds": [
+    5.932757943999604,
+    6.258367933001864,
+    6.42197953899813,
+    6.378044773999136,
+    6.3897530710019055
+  ],
+  "native_full_rows_median_seconds": 6.378044773999136,
+  "observed_ratio": 0.8784708931240208,
+  "harness_sha256": "aa21886a917683b0e16e3017ac6417e47923eae3d50990ba5e2eada1c921ea24"
+}

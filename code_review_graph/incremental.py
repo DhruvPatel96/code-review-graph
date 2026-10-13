@@ -48,6 +48,25 @@ _MCP_STDIO_ACTIVE = False
 _PARSE_WORKER_STATE = threading.local()
 
 
+def _parse_snapshot(
+    path: Path,
+    source: bytes,
+    parser: CodeParser,
+    repo_root: Path,
+) -> tuple[list, list]:
+    """Parse one immutable snapshot through the selected compatibility path."""
+    if (
+        os.environ.get("CRG_NATIVE_CORE", "") == "1"
+        and path.suffix.lower() == ".py"
+        and not source.startswith(b"# Databricks notebook source")
+    ):
+        from .native import parse_python_snapshots, parser_rows
+
+        result = parse_python_snapshots([(path.as_posix(), source)], repo_root)[0]
+        return parser_rows(result)
+    return parser.parse_bytes(path, source)
+
+
 def _select_executor_kind() -> str:
     """Return 'process' or 'thread' for parallel parsing.
 
@@ -1732,7 +1751,7 @@ def _parse_single_file(
             parser = CodeParser(Path(repo_root_str))
             _PARSE_WORKER_STATE.parser = parser
             _PARSE_WORKER_STATE.repo_root = repo_root_str
-        nodes, edges = parser.parse_bytes(abs_path, raw)
+        nodes, edges = _parse_snapshot(abs_path, raw, parser, Path(repo_root_str))
         return (rel_path, nodes, edges, None, fhash)
     except Exception as e:
         return (rel_path, [], [], str(e), "")
@@ -1782,7 +1801,7 @@ def full_build(
             try:
                 source = full_path.read_bytes()
                 fhash = hashlib.sha256(source).hexdigest()
-                nodes, edges = parser.parse_bytes(full_path, source)
+                nodes, edges = _parse_snapshot(full_path, source, parser, repo_root)
                 parsed = (nodes, edges, fhash)
             except (OSError, PermissionError) as e:
                 errors.append({"file": rel_path, "error": str(e)})
@@ -2087,7 +2106,7 @@ def incremental_update(
             try:
                 source = abs_path.read_bytes()
                 fhash = hashlib.sha256(source).hexdigest()
-                nodes, edges = parser.parse_bytes(abs_path, source)
+                nodes, edges = _parse_snapshot(abs_path, source, parser, repo_root)
             except (OSError, PermissionError) as e:
                 errors.append({"file": rel_path, "error": str(e)})
                 continue
