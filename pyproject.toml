@@ -55,6 +55,8 @@ code-review-graph = "code_review_graph.cli:main"
 crg-daemon = "code_review_graph.daemon_cli:main"
 
 [project.optional-dependencies]
+# Isolated replay experiment only; not a production backend or part of "all".
+ladybug-bench = ["ladybug==0.21.2"]
 embeddings = [
     "sentence-transformers>=3.0.0,<7",
     "numpy>=1.26,<3",
@@ -84,6 +86,7 @@ enrichment = [
     "jedi>=0.19.2",
 ]
 dev = [
+    "maturin>=1.9,<2",
     "mypy>=1.10,<3",
     "pytest>=8.0,<9",
     "pytest-asyncio>=0.23,<2",
@@ -101,6 +104,12 @@ browser-test = [
     "pytest-playwright>=0.5,<1",
 ]
 
+[tool.maturin]
+manifest-path = "native/Cargo.toml"
+python-source = "."
+module-name = "code_review_graph._native"
+features = ["pyo3/extension-module"]
+
 [tool.hatch.build.targets.wheel]
 packages = ["code_review_graph"]
 
@@ -110,6 +119,7 @@ packages = ["code_review_graph"]
 [tool.hatch.build.targets.sdist]
 include = [
     "code_review_graph/",
+    "native/",
     "skills/",
     "docs/",
     "hooks/",

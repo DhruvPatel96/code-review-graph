@@ -29,6 +29,10 @@ from .errors import ChangeDiscoveryError, GraphRootMismatchError, GraphStoreErro
 from .graph import GraphStore
 from .parser import CodeParser, normalize_file_path
 
+# Keep watch-loop timing patchable without replacing ``time.sleep`` process-wide.
+# Parser and SQLite retry paths may sleep while handling an event on another thread.
+_watch_sleep = time.sleep
+
 _MAX_PARSE_WORKERS = env_int("CRG_PARSE_WORKERS", min(os.cpu_count() or 4, 8))
 
 # Set only while the in-process FastMCP server is using stdio transport.
@@ -42,6 +46,25 @@ _MCP_STDIO_ACTIVE = False
 # both cases and avoids rebuilding CodeParser (including its grammar probes and
 # parser caches) for every file in a parallel build.
 _PARSE_WORKER_STATE = threading.local()
+
+
+def _parse_snapshot(
+    path: Path,
+    source: bytes,
+    parser: CodeParser,
+    repo_root: Path,
+) -> tuple[list, list]:
+    """Parse one immutable snapshot through the selected compatibility path."""
+    if (
+        os.environ.get("CRG_NATIVE_CORE", "") == "1"
+        and path.suffix.lower() == ".py"
+        and not source.startswith(b"# Databricks notebook source")
+    ):
+        from .native import parse_python_snapshots, parser_rows
+
+        result = parse_python_snapshots([(path.as_posix(), source)], repo_root)[0]
+        return parser_rows(result)
+    return parser.parse_bytes(path, source)
 
 
 def _select_executor_kind() -> str:
@@ -1489,11 +1512,14 @@ def _reconcile_stale_files(
     current_files: list[str] | None = None,
     *,
     known_text: set[str] | None = None,
+    remove: bool = True,
 ) -> list[str]:
     """Remove graph files absent from the current parseable repository inventory.
 
     ``known_text`` holds stored spellings already read and found not binary in
-    this update, so they are not read again just to repeat that check.
+    this update, so they are not read again just to repeat that check. With
+    ``remove=False``, only discover stale paths so callers can capture their
+    referrers before cleanup removes the dependency evidence.
     """
     stored_files = set(store.get_all_files())
     current_paths: set[str]
@@ -1523,7 +1549,7 @@ def _reconcile_stale_files(
             ):
                 current_paths.add(stored_file)
     stale_files = sorted(stored_files - current_paths)
-    if stale_files:
+    if stale_files and remove:
         store.remove_files_permanently(stale_files, stored_paths=True)
     return stale_files
 
@@ -1725,7 +1751,7 @@ def _parse_single_file(
             parser = CodeParser(Path(repo_root_str))
             _PARSE_WORKER_STATE.parser = parser
             _PARSE_WORKER_STATE.repo_root = repo_root_str
-        nodes, edges = parser.parse_bytes(abs_path, raw)
+        nodes, edges = _parse_snapshot(abs_path, raw, parser, Path(repo_root_str))
         return (rel_path, nodes, edges, None, fhash)
     except Exception as e:
         return (rel_path, [], [], str(e), "")
@@ -1775,7 +1801,7 @@ def full_build(
             try:
                 source = full_path.read_bytes()
                 fhash = hashlib.sha256(source).hexdigest()
-                nodes, edges = parser.parse_bytes(full_path, source)
+                nodes, edges = _parse_snapshot(full_path, source, parser, repo_root)
                 parsed = (nodes, edges, fhash)
             except (OSError, PermissionError) as e:
                 errors.append({"file": rel_path, "error": str(e)})
@@ -1832,6 +1858,8 @@ def full_build(
 
     store.set_metadata("last_updated", time.strftime("%Y-%m-%dT%H:%M:%S"))
     store.set_metadata("last_build_type", "full")
+    if not errors:
+        store.set_metadata("pending_dependent_files", "[]")
     _store_cpp_identity_pending(store, cpp_errors)
     # Storing is over: every file that could be parsed has its rows. Recorded
     # before the anchor and before post-processing, so a process killed from
@@ -1959,16 +1987,39 @@ def incremental_update(
         )
     )
     stale_files = (
-        _reconcile_stale_files(repo_root, store, known_text=known_text)
+        _reconcile_stale_files(repo_root, store, known_text=known_text, remove=False)
         if reconcile_stale
         else []
     )
 
     # Find dependent files (files that import from changed files)
-    dependent_files: set[str] = set()
-    for rel_path in changed_files:
+    pending = json.loads(store.get_metadata("pending_dependent_files") or "[]")
+    if not isinstance(pending, list) or not all(isinstance(path, str) for path in pending):
+        raise ValueError("Invalid pending_dependent_files metadata")
+    dependent_files: set[str] = set(pending)
+    # Capture dependencies before deleting stale nodes and their incident edges.
+    for rel_path in [*changed_files, *stale_files]:
         full_path = normalize_file_path(repo_root / rel_path)
-        deps = find_dependents(store, full_path)
+        previous_nodes = store.get_nodes_by_file(full_path)
+        relative = _relative_update_input(repo_root, rel_path)
+        if previous_nodes and full_path not in stale_files and Path(full_path).is_file():
+            normalized = normalize_file_path(relative)
+            digest = current_hashes.get(normalized)
+            if digest is None:
+                try:
+                    digest = hashlib.sha256(Path(full_path).read_bytes()).hexdigest()
+                    current_hashes[normalized] = digest
+                except OSError:
+                    pass  # The normal parse path reports read failures below.
+            if digest is not None and previous_nodes[0].file_hash == digest:
+                continue  # A repeated change hint must remain a no-op.
+        deps = set(find_dependents(store, full_path))
+        # Direct referrers must not be lost to the traversal cap or restricted
+        # edge kinds. Includes edge owners with a resolved source endpoint too.
+        deps.update(store.find_referrer_files(
+            node.qualified_name for node in previous_nodes
+        ))
+        deps.discard(full_path)
         for d in deps:
             # Convert back to relative path if needed
             try:
@@ -2025,6 +2076,7 @@ def incremental_update(
             existing_nodes = store.get_nodes_by_file(str(abs_path))
             if (
                 rel_path not in remaining_identity
+                and rel_path not in dependent_files
                 and fhash is not None
                 and existing_nodes
                 and existing_nodes[0].file_hash == fhash
@@ -2036,6 +2088,15 @@ def incremental_update(
 
     # Persist deletions before store_file_nodes_edges() opens its own
     # explicit transaction — avoids nested transaction errors.
+    # Persist the retry set before cleanup can erase the dependency evidence.
+    # Successful writes below remove their entries; failed/interrupted writes
+    # remain discoverable even in a later watch batch with no changed paths.
+    pending_dependents = dependent_files.intersection(to_parse)
+    store.set_metadata("pending_dependent_files", json.dumps(sorted(pending_dependents)))
+    store.commit()
+    if stale_files:
+        store.remove_files_permanently(stale_files, stored_paths=True)
+    removed_files = store.remove_files_permanently(sorted(missing_paths)) if missing_paths else 0
     use_serial = os.environ.get("CRG_SERIAL_PARSE", "") == "1"
     parsed_files = 0
 
@@ -2045,7 +2106,7 @@ def incremental_update(
             try:
                 source = abs_path.read_bytes()
                 fhash = hashlib.sha256(source).hexdigest()
-                nodes, edges = parser.parse_bytes(abs_path, source)
+                nodes, edges = _parse_snapshot(abs_path, source, parser, repo_root)
             except (OSError, PermissionError) as e:
                 errors.append({"file": rel_path, "error": str(e)})
                 continue
@@ -2059,6 +2120,7 @@ def incremental_update(
             # sees this file as changed.
             store.store_file_nodes_edges(str(abs_path), nodes, edges, fhash)
             remaining_identity.discard(rel_path)
+            pending_dependents.discard(rel_path)
             parsed_files += 1
             total_nodes += len(nodes)
             total_edges += len(edges)
@@ -2082,11 +2144,13 @@ def incremental_update(
                     fhash,
                 )
                 remaining_identity.discard(rel_path)
+                pending_dependents.discard(rel_path)
                 parsed_files += 1
                 total_nodes += len(nodes)
                 total_edges += len(edges)
 
-    removed_files = store.remove_files_permanently(sorted(missing_paths)) if missing_paths else 0
+    store.set_metadata("pending_dependent_files", json.dumps(sorted(pending_dependents)))
+    store.commit()
     files_updated = parsed_files + len(stale_files) + removed_files
     if identity_pending is not None and remaining_identity != identity_pending:
         _store_cpp_identity_pending(store, remaining_identity)
@@ -2149,8 +2213,11 @@ def incremental_update(
         "files_updated": files_updated,
         "total_nodes": total_nodes,
         "total_edges": total_edges,
-        "changed_files": list(changed_files),
-        "dependent_files": list(dependent_files),
+        "changed_files": list(dict.fromkeys([
+            *changed_files, *to_parse,
+            *(_relative_update_input(repo_root, path) for path in stale_files),
+        ])),
+        "dependent_files": sorted(dependent_files),
         "stale_files_removed": len(stale_files),
         "errors": errors,
         "freshness_advanced": freshness_advanced,
@@ -3242,14 +3309,12 @@ def watch(
     logger.info("Watching %s for changes... (Ctrl+C to stop)", repo_root)
     restore_sigterm = _install_sigterm_interrupt()
     try:
-        import time as _time
-
         while True:
             if stop_event is not None:
                 if stop_event.wait(_WATCH_TICK_SECONDS):
                     break
             else:
-                _time.sleep(_WATCH_TICK_SECONDS)
+                _watch_sleep(_WATCH_TICK_SECONDS)
             handler.raise_if_failed()
             _sync_watch_tree(supervisor, handler)
             if not supervisor.watched_paths:

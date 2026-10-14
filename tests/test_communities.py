@@ -223,8 +223,8 @@ class TestCommunities:
         # Add many TESTED_BY cross-community edges (well above the threshold of 10)
         for i in range(20):
             self.store.upsert_edge(EdgeInfo(
-                kind="TESTED_BY", source=f"auth.py::login",
-                target=f"db.py::query", file_path="auth.py", line=i + 100,
+                kind="TESTED_BY", source="auth.py::login",
+                target="db.py::query", file_path="auth.py", line=i + 100,
             ))
         self.store.commit()
 
@@ -1008,3 +1008,11 @@ class TestCommunityPrReconciliation:
                 member_to_community[production_node.qualified_name]
                 == member_to_community[test_node.qualified_name]
             )
+
+
+def test_community_name_does_not_depend_on_member_insertion_order():
+    members = [
+        _community_node(1, "pkg/a.py::zebra"),
+        _community_node(2, "pkg/b.py::apple"),
+    ]
+    assert _generate_community_name(members) == _generate_community_name(members[::-1])

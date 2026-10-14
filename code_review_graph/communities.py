@@ -103,7 +103,7 @@ def _generate_community_name(members: list[GraphNode]) -> str:
     class_names = [m.name for m in naming_members if m.kind == "Class"]
     if class_names:
         class_counts = Counter(class_names)
-        top_class, top_count = class_counts.most_common(1)[0]
+        top_class, top_count = min(class_counts.items(), key=lambda item: (-item[1], item[0]))
         if top_count > len(naming_members) * 0.4:
             if prefix:
                 return f"{prefix}-{_to_slug(top_class)}"
@@ -139,7 +139,7 @@ def _extract_file_prefix(file_paths: list[str]) -> str:
             parts.append(stem)
 
     counts = Counter(parts)
-    top_part, _ = counts.most_common(1)[0]
+    top_part, _ = min(counts.items(), key=lambda item: (-item[1], item[0]))
     return _to_slug(top_part)
 
 
@@ -156,7 +156,9 @@ def _extract_keywords(members: list[GraphNode]) -> list[str]:
 
     if not word_counts:
         return []
-    return [w for w, _ in word_counts.most_common(5)]
+    # Counts can tie, especially after deletion. Insertion order reflects node
+    # IDs, which change on incremental replacement; use lexical tie-breaking.
+    return sorted(word_counts, key=lambda word: (-word_counts[word], word))[:5]
 
 
 def _split_name(name: str) -> list[str]:
@@ -448,7 +450,9 @@ def _detect_leiden(
     communities: list[dict[str, Any]] = []
     for (members, member_qns), cohesion in zip(pending, cohesions):
         lang_counts = Counter(m.language for m in members if m.language)
-        dominant_lang = lang_counts.most_common(1)[0][0] if lang_counts else ""
+        dominant_lang = (
+            min(lang_counts, key=lambda lang: (-lang_counts[lang], lang)) if lang_counts else ""
+        )
         name = _generate_community_name(members)
 
         communities.append({
@@ -540,7 +544,9 @@ def _detect_file_based(
     communities: list[dict[str, Any]] = []
     for (dir_path, members, member_qns), cohesion in zip(pending, cohesions):
         lang_counts = Counter(m.language for m in members if m.language)
-        dominant_lang = lang_counts.most_common(1)[0][0] if lang_counts else ""
+        dominant_lang = (
+            min(lang_counts, key=lambda lang: (-lang_counts[lang], lang)) if lang_counts else ""
+        )
         name = _generate_community_name(members)
 
         communities.append({

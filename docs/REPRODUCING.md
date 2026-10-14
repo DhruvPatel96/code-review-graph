@@ -379,7 +379,10 @@ resolved to qualified names) and excludes ids and wall-clock columns. `nodes_fts
 compared through `fts5vocab`, which reads the FTS index itself rather than the `nodes`
 content table behind it.
 
-### Results on this repository
+### Historical results before incremental-fidelity repairs
+
+These measurements predate the repairs described below. They are retained as the
+original failing baseline, not the current behavior.
 
 323 files, 6,509 nodes, 57,042 edges, 186 flows. Differing rows per table, incremental
 update against clean rebuild:
@@ -397,7 +400,7 @@ update against clean rebuild:
 Benchmark wall time 79.1 s (8 clean builds plus 8 incremental updates).
 
 `nodes` and `nodes_fts` match everywhere: node rows and the search index are faithful. Every
-other divergence traces to one of three defects, none of which is fixed here.
+other divergence in this historical run traced to the defects described below.
 
 **1. `flow_memberships` is orphaned by every re-parse.** `flow_memberships.node_id` is a
 bare integer with no foreign key and no cascade, and `GraphStore._replace_file_data` deletes
@@ -430,10 +433,9 @@ The six `edges` rows that differ on every edit are a separate, smaller issue: th
 `ambiguous_targets` list inside an edge's `extra` JSON is ordered by node id, so re-parsing a
 file reorders it. Same set, different order, so the graph is not byte-reproducible.
 
-Every edit kind is listed in `incremental_fidelity.KNOWN_FAILURES`, which keeps the run from
-reporting them as unexpected. `tests/test_incremental_fidelity.py` guards against a kind that
-currently passes starting to diverge, and carries two `xfail` tests that document defects 1
-and 2 at the level of the defect.
+At that baseline, every edit kind was listed in `incremental_fidelity.KNOWN_FAILURES`
+and two defect tests were marked `xfail`. Those tests are now strict regressions and
+`KNOWN_FAILURES` is empty; new divergences are reported as failures of parity.
 
 ## Weekly CI run (report-only)
 
@@ -558,3 +560,369 @@ gin (go) @ 5c00df8afadd: 6 of 12 properties moved out of band
   - total_nodes fell below its band: baseline=1591 measured=0 delta=-1591 (-100.0%), allowed [1463.7, 2227.4] (x0.92..x1.4)
   - primary_language_present dropped: baseline=1 measured=0 delta=-1. gin is a go project but the graph holds languages []
 ```
+
+## SQLite repeated-update storage benchmark
+
+The storage experiment is a standalone module, separate from `code-review-graph eval`,
+because it creates and mutates scratch repositories. It does not open the source
+repository's graph or change production maintenance settings.
+
+```bash
+# Small smoke run, using the committed HEAD of a Python-containing Git repository.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 2 --files 2 --query-repeats 3 \
+  --output /tmp/crg-storage-smoke.json
+
+# Compare four policies over 200 updates (100 add/revert cycles) per policy.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --maintenance-every 10 \
+  --output /tmp/crg-storage-100.json
+
+# Optional offline vector-storage workload; these are NOT semantic model embeddings.
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --vector-dim 384 \
+  --output /tmp/crg-storage-vectors-100.json
+```
+
+Use a new output filename for every run; existing files are never overwritten.
+The output's parent directory must exist. The report records the source commit,
+dirty-worktree flag, harness hash, dependency versions, workload parameters and selected
+files. Git archive attributes apply; uncommitted/untracked content, symlinks, submodule
+contents and tracked graph databases are excluded. Custom `languages.toml` is retained.
+Python source files are selected in sorted path order from the indexed inventory; requesting
+more than the available count is an error. All indexed languages contribute to the graph,
+but this first workload only mutates Python. Each mutation appends a fixed set of functions
+and call edges; the revert restores the original bytes. It measures explicit changed-file
+batches with reconciliation, not Git change-discovery latency.
+
+Each policy runs sequentially in a fresh process with serial parsing and `PYTHONHASHSEED=0`.
+Inherited `CRG_*` settings are cleared and `CRG_HOME` is redirected to scratch space.
+Normal SQLite WAL auto-checkpointing remains enabled and its threshold is recorded.
+A connection remains open across cycles, approximating a persistent watcher. "Cold build"
+means an empty database, not a flushed operating-system cache.
+
+| Policy | Action at `--maintenance-every` cycles and at the last cycle |
+| --- | --- |
+| `none` | No manual maintenance |
+| `checkpoint` | `wal_checkpoint(TRUNCATE)` |
+| `vacuum` | `VACUUM`, then a truncating checkpoint |
+| `incremental` | Set `auto_vacuum=INCREMENTAL` before schema creation; reclaim at most `--incremental-pages` (default 128), then checkpoint |
+
+Every phase records main/WAL/SHM file lengths, page size/count, free-page count, and logical
+table counts. `allocated_bytes` includes committed pages that may still be in WAL;
+`non_freelist_bytes` includes indexes, metadata and internal slack, so it is **not** live
+application payload size. File lengths are not filesystem allocated-block usage. The observed
+peak is sampled at phase boundaries and excludes transient files created during vacuum.
+`dbstat` object allocations are reported when the SQLite build supports them.
+
+Parsing/resolution, post-processing, optional embedding refresh and maintenance have separate
+wall/CPU timings; cold builds also record store-opening time. CPU includes child-process
+user/system time. Worker peak RSS includes verification and diagnostics and is unavailable
+on platforms without `resource`. `peak_policy_rss_bytes` is sampled before end diagnostics;
+`peak_worker_rss_bytes` includes those diagnostics too.
+Query measurements include incoming/outgoing edges, 2-hop impact, 3-hop blast radius and FTS.
+The first call and warm p50/p95 are recorded separately, before and after churn; these are
+queries for one recorded symbol, not a representative query corpus. Default p95 uses only
+five samples; increase `--query-repeats` for latency analysis.
+
+`--vector-dim` injects a deterministic synthetic provider into the existing `EmbeddingStore`
+inside the worker. It exercises the production float32 BLOB writes, orphan cleanup and exact
+cosine search. It performs no network/model calls and measures neither model inference nor
+semantic relevance. The default leaves embeddings disabled rather than reporting a fake
+semantic-search latency.
+
+Correctness checks compare each reverted core graph and the existing fidelity benchmark's
+ID-independent derived projections with the cold build. Repeated mutated states are compared
+with the first mutation; that first mutation is **not** independently rebuilt. FTS integrity
+and dangling flow/community references are also checked. The benchmark reports drift instead
+of silently repairing it. `correctness_ok=false` or a worker failure produces exit code 2
+while still writing the report. Inspect `mismatched_layers`, `health` and `error` before
+interpreting a smaller/faster database as an improvement. `unchecked_layers` names projections
+unavailable in the running SQLite build. Verification is outside update timing.
+
+After the policy workload, separate `end_diagnostics` measure checkpointing and then vacuum.
+Those results and `after_close` must not be substituted for `final_sample` when comparing
+policy growth. The summary excludes end diagnostics from growth and maintenance totals.
+The final content check verifies that these maintenance operations preserved the graph.
+
+Run the harness tests with:
+
+```bash
+uv run pytest tests/test_storage_growth.py -q
+```
+
+This establishes a SQLite baseline. It does not select a new default backend, remove indexes,
+or establish a performance advantage for LadybugDB.
+
+### Measured baseline: 100 cycles on `4f517b0`
+
+Source and harness commit: `4f517b006330d8594f9c7266c20acbc4baa4ab1d`, clean worktree.
+The run used Python 3.13.15, SQLite 3.53.1, Linux aarch64, serial parsing,
+20 files, four appended functions per file, 100 add/revert cycles per policy,
+maintenance every ten cycles, 128 incremental-vacuum pages, ten query repetitions,
+and no embeddings. `igraph` was unavailable, so community detection used its fallback.
+Reproduce with the command above plus `--query-repeats 10` at that commit.
+
+Tracked evidence:
+
+- [Summary and provenance](../evaluate/results/storage_growth_summary_4f517b0_100.csv)
+- [Every phase's disk/page/table measurements](../evaluate/results/storage_growth_curve_4f517b0_100.csv)
+- [Cold/final query samples](../evaluate/results/storage_growth_queries_4f517b0_100.csv)
+
+The full local report is `evaluate/reports/storage-growth-4f517b0-100.json` (ignored by Git).
+Its SHA-256 and the harness SHA-256 are recorded in the summary CSV. All four workers
+completed, totaling 800 updates. The command exited **2 because correctness checks failed**,
+not because a worker crashed.
+
+Sizes below include main DB + WAL + SHM; 1 MiB = 1,048,576 bytes. Final measurements
+follow each policy's last scheduled maintenance, before the separate end diagnostics.
+Update time excludes verification and maintenance; maintenance cost covers all ten calls.
+
+| Policy | Cold MiB | Final MiB | Observed peak MiB | Final free pages MiB | Update p50 / p95 seconds | Total maintenance seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| None | 121.10 | 125.53 | 125.53 | 0.70 | 1.005 / 1.027 | <0.0001 |
+| Checkpoint | 121.10 | 104.30 | 124.16 | 0.71 | 1.036 / 1.100 | 0.0124 |
+| VACUUM + checkpoint | 121.10 | 91.53 | 124.16 | 0.00 | 1.050 / 1.133 | 2.0499 |
+| Incremental + checkpoint | 122.48 | 104.20 | 125.44 | 0.36 | 1.006 / 1.065 | 0.0136 |
+
+Without manual maintenance, the final WAL retained 21.24 MiB. The end diagnostic
+checkpoint reduced that case from 125.53 to 104.29 MiB; subsequent VACUUM reduced it
+to 91.53 MiB. Only 0.70 MiB was on the freelist before those diagnostics, so freelist
+size alone understates reclaimable space: VACUUM also repacks partially filled pages.
+These observations support investigating SQLite maintenance before replacing the backend.
+They do not establish a production maintenance interval or a backend winner.
+
+The untreated case grew 4.43 MiB from its cold sample across 200 updates, including
+0.54 MiB between cycles 50 and 100. This run does not demonstrate a final plateau
+or unbounded long-term growth. Negative net growth for maintained cases includes removing
+WAL retained by the cold build; it is not a sustained negative growth rate.
+Incremental vacuum ended only 0.11 MiB smaller than checkpoint-only in this workload.
+Observed peaks exclude transient VACUUM files. Worker peak RSS before end diagnostics
+was approximately 814–818 MiB and includes correctness verification.
+
+**Correctness is the next investigation.** All 800 core comparisons and FTS integrity
+checks passed. Every reverted graph contained 8,430 nodes and 76,805 edges, matching the
+cold build. However, all 100 reverts in every policy differed from the cold build in
+`flows`, `flow_memberships`, `flow_snapshots`, and `node_community`. Cold builds had zero
+dangling flow memberships; every policy ended with 687. Row counts alone concealed this
+drift. End-diagnostic maintenance preserved the existing content, including the drift.
+The evidence concerns the incremental derived-data pipeline; maintenance did not repair it.
+
+This is one sequential run of one deterministic Python mutation workload, with one
+query target and no vector workload. Timing differences lack repeated-run confidence
+intervals. Resolve and regression-test the derived-data drift, then repeat this baseline
+before evaluating backend parity or drawing stronger performance conclusions.
+
+### Corrected derived-data baseline: 100 cycles on `19d7b99`
+
+The repair commit is `19d7b99409f3f4a8a60436ea126ad91885a29f73`. Full MCP
+post-processing now recomputes flows and communities from the resolved graph, as
+CLI post-processing already does. Replacing file nodes changes their IDs and clears
+community assignments; the old selective path could no longer join old memberships
+to those nodes, and relative file hints did not match stored absolute paths. Parsing
+and FTS updates remain incremental. Selective derived-data repair would require
+preserving dependency information before replacement; this fix chooses recomputation.
+
+Three regressions failed before the fix. Strict coverage now checks dangling
+memberships, restored community assignments, and three repeated mutation/revert cycles
+for file replacement, addition, and deletion, comparing every phase with a fresh build.
+The broad suite passed with 4,300 tests, 808 skips, 46 deselections and two existing
+XPASS results; Ruff, mypy, wheel and sdist builds also passed.
+
+The repeated experiment used a clean worktree, the **unchanged benchmark harness**
+(SHA-256 `23b703426a5b4476aa272428443eda3640682d1baa68d27ace032cadbc0ce22c`), and
+the same configuration and dependency versions as the earlier run. No embeddings or
+igraph were installed for either measurement. The committed source itself includes
+the repair and new tests, so this is not an identical-input controlled timing comparison.
+
+```bash
+uv run python -m code_review_graph.eval.benchmarks.storage_growth \
+  --repo . --cycles 100 --files 20 --query-repeats 10 --maintenance-every 10 \
+  --output /tmp/crg-storage-fixed-100.json
+```
+
+**All four policies passed correctness and the command exited 0.** Every one of the
+800 updates passed its core/derived fingerprint, reference-integrity, and FTS checks;
+no projection was unavailable. All 400 reverts matched their cold build. Each final
+graph had 8,431 nodes, 76,840 edges, 138 flows and 6,127 flow memberships, with zero
+dangling flow memberships or community assignments. End-diagnostic maintenance also
+preserved the graph.
+
+| Policy | Cold MiB | Final MiB | Observed peak MiB | Final free pages MiB | Update p50 / p95 seconds | Total maintenance seconds |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| None | 120.92 | 125.41 | 125.41 | 0.70 | 1.447 / 1.503 | <0.0001 |
+| Checkpoint | 120.92 | 104.36 | 123.99 | 0.70 | 1.483 / 1.595 | 0.0106 |
+| VACUUM + checkpoint | 120.92 | 91.61 | 123.99 | 0.00 | 1.442 / 1.560 | 1.8345 |
+| Incremental + checkpoint | 122.24 | 103.98 | 125.32 | 0.19 | 1.569 / 1.703 | 0.0158 |
+
+The untreated final WAL retained 21.04 MiB. End-diagnostic checkpointing reduced total
+size to 104.36 MiB and vacuum to 91.61 MiB. The untreated case grew 4.49 MiB from its
+cold sample, including 0.51 MiB between cycles 50 and 100. Incremental vacuum ended
+0.38 MiB smaller than checkpoint-only. The same measurement limits above apply.
+
+Median updates now take 1.44–1.57 seconds versus 1.00–1.05 seconds in the earlier
+run. Recomputing derived tables has a visible cost; the earlier timings came from an
+incorrect pipeline. These single-run numbers do not isolate causality or justify
+choosing a maintenance default. Worker peak RSS before diagnostics was about
+860–861 MiB, including verification. Final warm query medians ranged from
+0.87–0.91 ms for callers, 75.86–90.09 ms for two-hop impact, 96.12–116.68 ms for
+three-hop impact, and 0.060–0.065 ms for FTS on the recorded target.
+
+Tracked evidence:
+
+- [Corrected summary and provenance](../evaluate/results/storage_growth_summary_19d7b99_100.csv)
+- [Corrected phase measurements](../evaluate/results/storage_growth_curve_19d7b99_100.csv)
+- [Corrected query samples](../evaluate/results/storage_growth_queries_19d7b99_100.csv)
+
+The full local report is `evaluate/reports/storage-growth-19d7b99-100.json`; its
+SHA-256 is recorded in the summary CSV. Beads issue `crg-eot` tracks this repair and
+rerun. At that revision, `crg-c7k` still tracked deleted-target edge invalidation
+(six differing edges in the fidelity fixture). The later repair and broader edit
+verification are described next. The add/revert workload alone does not establish
+parity for every edit kind.
+
+### Deleted-target repair and seven-edit parity on `87f4804`
+
+The repository-scale fidelity run on commit `87f4804` completed with **all seven
+scenarios passing and zero differing rows**: trailing comment, function rename,
+file deletion, file addition, function move, import change, and revert. No table
+projection was unavailable and no known-failure exemption was used.
+
+[Tracked results and provenance](../evaluate/results/incremental_fidelity_87f4804.csv)
+record the full source commit, Python/SQLite versions, raw report hash, edit targets,
+and per-table differences. The raw report and progress log are retained locally in
+`evaluate/reports/deleted-target-fidelity.json` and `.log`. The run used a clean
+worktree, serial parsing, `PYTHONHASHSEED=0`, and scratch repositories. Fidelity run
+timings are not a storage-performance comparison.
+
+The deletion repair captures edge-owning referrers before stale-file cleanup erases
+the nodes and incoming edges needed to discover them. Those dependent files are
+reparsed even when their own bytes are unchanged, restoring unresolved calls as a
+fresh build would. Direct referrers are collected independently of the bounded
+transitive traversal. Reparsed and removed paths reach FTS post-processing too.
+A persistent pending-referrer set lets a later update retry parser or database
+failures after the original dependency evidence has gone. Repeated change hints
+for unchanged targets remain no-ops.
+
+Repository-scale testing also exposed insertion-order-dependent output. Ambiguous
+and unresolved candidate lists now sort before truncation; tied community naming
+and language counts use lexical tie-breaking. These changes prevent equivalent
+updated and freshly built graphs from differing only because row IDs changed.
+
+Regression coverage includes Git-detected deletion, reconciliation-only discovery,
+watch batches, capped dependency discovery, parser/write failure recovery after
+reopening the database, no-op updates, and deterministic candidate/community output.
+The final suite passed **4,309 tests**, with 808 skips, 46 deselections and two existing
+XPASS results. Ruff, mypy, wheel and sdist builds passed. The real-observer deletion
+test now waits for the `watching` phase rather than deleting a directory during the
+initial-build heartbeat, before the observer has started.
+
+To repeat the seven scenarios against the current local checkout:
+
+```bash
+CRG_SERIAL_PARSE=1 PYTHONHASHSEED=0 uv run python - <<'PY'
+import json
+from pathlib import Path
+from code_review_graph.eval.benchmarks.incremental_fidelity import run
+
+rows = run(Path.cwd(), None, {"name": "code-review-graph"})
+print(json.dumps(rows, indent=2))
+assert all(row["status"] == "ok" and row["total_differing_rows"] == 0 for row in rows)
+PY
+```
+
+`crg-c7k` is resolved for these covered scenarios. This strengthens the SQLite
+correctness reference before a Ladybug experiment; it does not establish parity for
+all languages or workloads. Referrer reparsing changes update work, so the earlier
+100-cycle timing numbers remain measurements of `19d7b99`, not of this revision.
+No new 100-cycle storage run or Ladybug comparison is claimed here.
+
+## Experimental Ladybug core replay
+
+The `ladybug-bench` contributor extra pins `ladybug==0.21.2`. It is deliberately
+excluded from `all` and does not select a production backend. Installation follows
+[Ladybug's Python installation guide](https://docs.ladybugdb.com/installation/).
+
+```bash
+uv sync --extra dev --extra ladybug-bench
+uv run --no-sync pytest tests/test_replay_stores.py tests/test_genai_packaging.py -q
+uv run --no-sync python -m code_review_graph.eval.benchmarks.ladybug_replay \
+  --cycles 100 --files 20 --buffer-mb 128 \
+  --output evaluate/reports/ladybug-replay.json
+uv run --no-sync python -m code_review_graph.eval.benchmarks.ladybug_capabilities \
+  --output evaluate/reports/ladybug-capabilities.json
+```
+
+Outputs must be new files. The replay archives committed HEAD into a temporary
+repository, runs the real SQLite parse/postprocessing pipeline, appends one
+function to each of 20 Python files, and verifies that reverting reproduces the
+baseline core rows. Every changed file owner (including affected dependents) is
+then replayed into fresh SQLite and Ladybug databases in separate processes.
+Each of 100 add/revert cycles compares all core rows, including duplicate edges
+and unresolved endpoints. The harness checks incoming/outgoing edges and native
+2/3-hop reverse traversals for five high-indegree symbols against a Python oracle,
+then checks persistence after checkpoint and reopen.
+
+SQLite uses the existing schema and indexes. Ladybug uses native relationships,
+JSON row payloads and explicit placeholder vertices for unresolved endpoints.
+Placeholders preserve foreign references during file replacement; permanent
+deletion removes incident references. These adapters are experimental replay
+stores, not implementations of the complete production storage contract.
+
+The 128 MiB SQLite page-cache target and Ladybug buffer pool are configuration
+settings, not equivalent total-memory limits. Ladybug uses one query thread;
+both use their default automatic checkpoint policy. Reported update timings
+exclude verification and source parsing. Disk samples include database sidecars,
+before and after an explicit checkpoint. Source builds run only once in SQLite;
+there is no Ladybug parser/MCP integration in this experiment. Derived tables,
+FTS, vectors, full impact-radius policy, embeddings, and end-to-end MCP latency
+are excluded. Disk/timing figures must not be compared directly with the earlier
+full-pipeline storage-growth benchmark. This is one machine and one source
+snapshot, not a migration verdict or a general engine ranking.
+
+The separate capability probe installs/loads the native FTS/vector extensions
+from Ladybug's extension service. See the official
+[FTS](https://docs.ladybugdb.com/extensions/full-text-search/) and
+[vector](https://docs.ladybugdb.com/extensions/vector/) documentation. It logs the
+query before execution and isolates each feature in a subprocess so a native
+crash is visible in the report. A nonzero process status is a failed capability
+gate, not a skipped test. Tiny synthetic-vector probes do not establish real
+embedding recall, search ranking compatibility, or production readiness.
+
+### Results on `22b1f193`
+
+Environment: Python 3.13.15, SQLite 3.53.1, Ladybug 0.21.2, Linux aarch64.
+The committed snapshot produced 8,438 core nodes and 77,015 core edges. The
+20 edited inputs changed 20 row owners. Raw evidence is in
+`evaluate/results/ladybug_replay_22b1f19_128mb.json`,
+`evaluate/results/ladybug_replay_22b1f19_512mb.json`,
+`evaluate/results/ladybug_replay_22b1f19_512mb_ladybug.json`, and
+`evaluate/results/ladybug_capabilities_0_21_2.json`.
+
+| Result | SQLite | Ladybug |
+| --- | ---: | ---: |
+| 128 MiB configured cache/buffer | 200/200 core replays correct | Initial load failed: buffer pool full |
+| 512 MiB median file-set replacement | 0.0373 s | 0.8173 s |
+| 512 MiB initial load | 0.612 s | 18.878 s |
+| 512 MiB peak worker RSS | 473.4 MiB | 1,052.7 MiB |
+| 512 MiB post-checkpoint disk | 92.1 MiB | 148.5 MiB |
+| `GraphStore`, depth 2 | 5.781 s, 648 correct results | 0.038 s, 569 results (incorrect) |
+| `GraphStore`, depth 3 | 8.523 s, 843 correct results | 2.538 s, 766 results (incorrect) |
+
+At 512 MiB, both stores reproduced every core row after all 200 add/revert
+updates and survived checkpoint/reopen. Ladybug was about 22 times slower for
+the measured file-set replacement and used about 2.2 times the peak worker RSS.
+Its native variable-length traversal was much faster, but failed the independent
+reachability oracle, so those query times are not successful parity results.
+
+The extension probes passed vector insert/query/delete behavior. FTS with
+literal search text passed, but the production-shaped bound-parameter FTS probe
+terminated with `SIGSEGV` after deleting an indexed node. FTS alone and the
+combined FTS/vector process both returned `-11`; vector alone returned zero.
+The probe was repeated with the same outcome.
+
+Conclusion: keep SQLite as the production backend. Ladybug is not ready for a
+backend migration here because it fails the equal-memory load, native traversal
+parity, and bound-parameter FTS safety gates. Its faster native traversal is
+interesting only after correctness and crash fixes are verified. The current
+experiment does not establish full backend or MCP parity.

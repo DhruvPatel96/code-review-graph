@@ -26,6 +26,7 @@ Core package `code_review_graph/` (Python 3.10+):
 - `cli.py`: the `code-review-graph` command. `daemon.py` and `daemon_cli.py`: the `crg-daemon` multi-repo watch daemon.
 - `parser.py`: Tree-sitter multi-language parser with fallbacks for notebooks and other formats. `custom_languages.py`: languages defined in `.code-review-graph/languages.toml` (see docs/CUSTOM_LANGUAGES.md).
 - `graph.py`: SQLite graph store (nodes, edges, impact analysis). `migrations.py`: schema migrations; the current schema version is 13 and must equal `SUPPORTED_SCHEMA_VERSION` in the VS Code extension (CI checks this).
+- `storage/`: incremental storage boundary. `models.py` owns the graph records, re-exported by `graph.py`; `base.py` defines core and file-maintenance protocols. `sqlite_store.py` contains extracted file-maintenance operations inherited by the existing `GraphStore`. `factory.py` opens that same SQLite implementation and is used by the CLI. This is not yet a complete pluggable backend: search, resolvers, and derived-data persistence still have direct SQL callers.
 - `incremental.py`: full build, Git/SVN change detection, incremental update, stale-file reconciliation, watch mode. `postprocessing.py`: shared post-build pipeline (signatures, flows, communities, FTS).
 - Post-build resolvers: `python_resolver.py`, `jedi_resolver.py` (optional `enrichment` extra), `spring_resolver.py`, `event_resolver.py`, `temporal_resolver.py`, `config_keys.py`, `scoped_resolver.py` (PHP, Rust, C#), `rescript_resolver.py`, `hcl_resolver.py`, `tsconfig_resolver.py` (tsconfig and jsconfig path aliases).
 - `flows.py`: execution flows and criticality. `communities.py`: Leiden via igraph (optional) or file-based grouping, plus the architecture overview. `analysis.py`: hub and bridge nodes, knowledge gaps, surprise scoring, suggested questions.
@@ -66,6 +67,7 @@ uv run code-review-graph --help             # full command list
 - SQL: parameterised queries with `?` placeholders. Never format values into SQL strings.
 - Errors: catch specific exceptions and log with `logger.warning` or `logger.error`.
 - Threads: `threading.Lock` around shared caches; SQLite opened with `check_same_thread=False`.
+- Storage extraction: preserve `graph.GraphStore` and its existing transaction behavior. Put backend-neutral records/contracts in `storage/`; move SQL behind named operations as callers are migrated. Do not add raw connections or SQL execution to the protocols. Keep file replacement (file-owned rows only) distinct from permanent deletion (including endpoint references and embeddings).
 - Node names: pass through `_sanitize_name()` before returning them to MCP clients.
 - File reads: read the bytes once, hash them, then parse the same bytes.
 

@@ -6,6 +6,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+native/target/
 *.egg
 .eggs/
 
@@ -90,3 +91,7 @@ scratch/
 # Local tool configuration
 .codex/
 .serena/
+
+# Beads / Dolt files (added by bd init)
+.beads/proxieddb/
+*.gate.lock*

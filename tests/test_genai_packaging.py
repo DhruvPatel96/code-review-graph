@@ -33,7 +33,7 @@ def _lock() -> dict:
 # Extras that exist for contributors, not users: [all] must NOT drag them in.
 # "dev" is the lint/type/test toolchain; "browser-test" is Playwright, whose
 # tests also need a ~150 MB Chromium download fetched out of band.
-CONTRIBUTOR_EXTRAS = {"dev", "browser-test"}
+CONTRIBUTOR_EXTRAS = {"ladybug-bench", "dev", "browser-test"}
 
 
 def test_all_extra_covers_every_optional_group():

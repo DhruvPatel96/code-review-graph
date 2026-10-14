@@ -1,0 +1,96 @@
+{
+  "source_revision": "22b1f193b7de041c78fa786784fb59b2710213d5",
+  "python": "3.13.15",
+  "platform": "Linux-7.0.0-34-generic-aarch64-with-glibc2.43",
+  "ladybug": "0.21.2",
+  "scope": "core rows only; no derived data, FTS, vectors or MCP",
+  "cycles": 100,
+  "input_files": 20,
+  "changed_owners": 20,
+  "nodes": 8438,
+  "edges": 77015,
+  "baseline_sha256": "7703412fdb90231421b3f624a275085e93a0512527dc266082359d8821aac1cd",
+  "buffer_mb": 128,
+  "ladybug_threads": 1,
+  "results": [
+    {
+      "backend": "sqlite",
+      "correctness_ok": true,
+      "load_seconds": 1.0039742480000768,
+      "updates": 200,
+      "update_median_seconds": 0.03771357749997151,
+      "update_max_seconds": 0.17264847600017674,
+      "query_samples": [
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore",
+          "depth": 2,
+          "results": 648,
+          "median_seconds": 5.882193218000111
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore",
+          "depth": 3,
+          "results": 843,
+          "median_seconds": 8.917929905000165
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/parser.py::NodeInfo",
+          "depth": 2,
+          "results": 452,
+          "median_seconds": 4.879155781999998
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/parser.py::NodeInfo",
+          "depth": 3,
+          "results": 592,
+          "median_seconds": 7.068959921999976
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore.close",
+          "depth": 2,
+          "results": 581,
+          "median_seconds": 6.336146960000178
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore.close",
+          "depth": 3,
+          "results": 705,
+          "median_seconds": 10.227609404000077
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore.upsert_node",
+          "depth": 2,
+          "results": 364,
+          "median_seconds": 3.2117372469999736
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/graph.py::GraphStore.upsert_node",
+          "depth": 3,
+          "results": 377,
+          "median_seconds": 3.544438117000027
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/parser.py::EdgeInfo",
+          "depth": 2,
+          "results": 303,
+          "median_seconds": 2.9600310499999978
+        },
+        {
+          "seed": "/tmp/crg-replay-source-h6u5_fhd/repo/code_review_graph/parser.py::EdgeInfo",
+          "depth": 3,
+          "results": 436,
+          "median_seconds": 4.695299535000004
+        }
+      ],
+      "bytes_before_checkpoint": 193304832,
+      "bytes_after_checkpoint": 96583680,
+      "checkpoint_seconds": 0.0037603819998821564
+    },
+    {
+      "backend": "ladybug",
+      "correctness_ok": false,
+      "returncode": 1,
+      "stderr": "Traceback (most recent call last):\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 232, in transaction\n    yield\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 291, in replace_files\n    self._write(image)\n    ~~~~~~~~~~~^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 258, in _write\n    self._batches(\n    ~~~~~~~~~~~~~^\n        \"UNWIND $rows AS r MATCH (a:CodeNode {qn:r.source}),\"\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    ...<11 lines>...\n        ],\n        ^^\n    )\n    ^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 240, in _batches\n    self.query(sql, {\"rows\": rows[start : start + 1000]})\n    ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 219, in query\n    result: Any = self.conn.execute(sql, params)\n                  ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/.venv/lib/python3.13/site-packages/ladybug/connection.py\", line 889, in execute\n    query_result_internal = self._execute_with_pybind(query, parameters)\n  File \"/home/dhruv/Desktop/code-review-graph/.venv/lib/python3.13/site-packages/ladybug/connection.py\", line 779, in _execute_with_pybind\n    return py_connection.execute(prepared, parameters)\n           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^\nRuntimeError: Buffer manager exception: Unable to allocate memory! The buffer pool is full and no memory could be freed!\n\nDuring handling of the above exception, another exception occurred:\n\nTraceback (most recent call last):\n  File \"<frozen runpy>\", line 203, in _run_module_as_main\n  File \"<frozen runpy>\", line 88, in _run_code\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/ladybug_replay.py\", line 239, in <module>\n    raise SystemExit(main())\n                     ~~~~^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/ladybug_replay.py\", line 228, in main\n    print(json.dumps(worker(json.loads(args.worker.read_text()))))\n                     ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/ladybug_replay.py\", line 41, in worker\n    store.replace_files(\n    ~~~~~~~~~~~~~~~~~~~^\n        sorted({r[\"file_path\"] for rows in baseline.values() for r in rows}), baseline\n        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n    )\n    ^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 282, in replace_files\n    with self.transaction():\n         ~~~~~~~~~~~~~~~~^^\n  File \"/home/dhruv/.local/share/uv/python/cpython-3.13.15-linux-aarch64-gnu/lib/python3.13/contextlib.py\", line 162, in __exit__\n    self.gen.throw(value)\n    ~~~~~~~~~~~~~~^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 235, in transaction\n    self.query(\"ROLLBACK\")\n    ~~~~~~~~~~^^^^^^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/code_review_graph/eval/benchmarks/replay_stores.py\", line 219, in query\n    result: Any = self.conn.execute(sql, params)\n                  ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^\n  File \"/home/dhruv/Desktop/code-review-graph/.venv/lib/python3.13/site-packages/ladybug/connection.py\", line 889, in execute\n    query_result_internal = self._execute_with_pybind(query, parameters)\n  File \"/home/dhruv/Desktop/code-review-graph/.venv/lib/python3.13/site-packages/ladybug/connection.py\", line 772, in _execute_with_pybind\n    return py_connection.query(query)\n           ~~~~~~~~~~~~~~~~~~~^^^^^^^\nRuntimeError: No active transaction for ROLLBACK.\n"
+    }
+  ]
+}

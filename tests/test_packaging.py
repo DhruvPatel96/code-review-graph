@@ -585,6 +585,9 @@ def test_wheel_ships_nothing_it_should_not(wheel_names: list[str]) -> None:
 def test_sdist_ships_nothing_it_should_not(sdist_names: list[str]) -> None:
     assert len(sdist_names) > 50, f"only {len(sdist_names)} entries in the sdist"
     assert "pyproject.toml" in sdist_names
+    assert "native/Cargo.toml" in sdist_names
+    assert "native/Cargo.lock" in sdist_names
+    assert "native/src/lib.rs" in sdist_names
 
     # Hatchling always emits .gitignore and cannot be told not to; every other
     # dot-path is a leak. Pinning it as the single exception means a new one
